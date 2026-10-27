@@ -79,6 +79,9 @@ final class SharingLifecycleDelegate: NSObject, NSSharingServiceDelegate, NSShar
 	private var finished = false
 	private var timeoutTask: Task<Void, Never>?
 
+	/// Window the share originates from. ShareKit asserts if a service is performed without one.
+	weak var sourceWindow: NSWindow?
+
 	init(id: UUID, onEnd: @escaping () -> Void, onBegin: @escaping () -> Void, onFinish: @escaping () -> Void) {
 		self.id = id
 		self.onEnd = onEnd
@@ -152,6 +155,10 @@ final class SharingLifecycleDelegate: NSObject, NSSharingServiceDelegate, NSShar
 
 	func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: Error) {
 		finishIfNeeded()
+	}
+
+	func sharingService(_ sharingService: NSSharingService, sourceWindowForShareItems items: [Any], sharingContentScope: UnsafeMutablePointer<NSSharingService.SharingContentScope>) -> NSWindow? {
+		sourceWindow ?? NSApp.keyWindow
 	}
 }
 

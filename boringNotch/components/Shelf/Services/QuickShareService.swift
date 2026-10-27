@@ -123,6 +123,7 @@ class QuickShareService: ObservableObject {
             self?.stopSharingAccessingURLs()
         }
         lifecycleDelegate = delegate
+        delegate.sourceWindow = view?.window
 
         if let svc = cachedServices[provider.id], svc.canPerform(withItems: items) {
             // For direct service path, explicitly mark service interaction start

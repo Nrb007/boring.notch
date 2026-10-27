@@ -156,6 +156,7 @@ final class ShelfItemViewModel: ObservableObject {
                 self?.stopSharingAccessingURLs()
             }
             self.sharingLifecycle = lifecycle
+            lifecycle.sourceWindow = view?.window
             
             let picker = NSSharingServicePicker(items: itemsToShare)
             picker.delegate = lifecycle
