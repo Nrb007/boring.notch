@@ -144,18 +144,25 @@ private struct ScrollMonitor: NSViewRepresentable {
     }
 }
 
-// MARK: - Horizontal swipe
+// MARK: - Two-finger swipes
 
 extension View {
     /// Fires once per two-finger horizontal trackpad swipe over this view. Overlapping swipe regions
     /// don't double-fire: only the smallest one under the pointer handles the swipe, and swipes over
     /// content that scrolls horizontally (e.g. the calendar's date strip) are left to that content.
     func onHorizontalSwipe(threshold: CGFloat = 40, perform action: @escaping (PanDirection) -> Void) -> some View {
-        background(SwipeMonitor(threshold: threshold, action: action))
+        background(SwipeMonitor(axis: .horizontal, threshold: threshold, action: action))
+    }
+
+    /// The vertical counterpart: reports .down or .up by finger direction, and leaves swipes over
+    /// content that scrolls vertically (a long list or note) to that content.
+    func onVerticalSwipe(threshold: CGFloat = 40, perform action: @escaping (PanDirection) -> Void) -> some View {
+        background(SwipeMonitor(axis: .vertical, threshold: threshold, action: action))
     }
 }
 
 private struct SwipeMonitor: NSViewRepresentable {
+    let axis: Axis
     let threshold: CGFloat
     let action: (PanDirection) -> Void
 
@@ -167,11 +174,12 @@ private struct SwipeMonitor: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) { context.coordinator.action = action }
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) { coordinator.removeMonitor() }
 
-    func makeCoordinator() -> Coordinator { Coordinator(threshold: threshold, action: action) }
+    func makeCoordinator() -> Coordinator { Coordinator(axis: axis, threshold: threshold, action: action) }
 
     @MainActor final class Coordinator: NSObject {
         private static var registered: [Coordinator] = []
 
+        private let axis: Axis
         private let threshold: CGFloat
         var action: (PanDirection) -> Void
         private weak var view: NSView?
@@ -179,7 +187,8 @@ private struct SwipeMonitor: NSViewRepresentable {
         private var accumulated: CGFloat = 0
         private var fired = false
 
-        init(threshold: CGFloat, action: @escaping (PanDirection) -> Void) {
+        init(axis: Axis, threshold: CGFloat, action: @escaping (PanDirection) -> Void) {
+            self.axis = axis
             self.threshold = threshold
             self.action = action
         }
@@ -212,15 +221,18 @@ private struct SwipeMonitor: NSViewRepresentable {
             // Trackpad finger movement only; ignore inertia after the fingers lift
             guard !event.phase.isEmpty, event.momentumPhase.isEmpty, !fired else { return }
 
-            let absDX = abs(event.scrollingDeltaX)
-            let absDY = abs(event.scrollingDeltaY)
-            guard absDX >= 1.5 * absDY, owns(event.locationInWindow) else { return }
+            let along = axis == .horizontal ? event.scrollingDeltaX : event.scrollingDeltaY
+            let across = axis == .horizontal ? event.scrollingDeltaY : event.scrollingDeltaX
+            guard abs(along) >= 1.5 * abs(across), owns(event.locationInWindow) else { return }
 
             // Track the physical finger direction regardless of the natural scrolling setting
-            accumulated += event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+            accumulated += event.isDirectionInvertedFromDevice ? along : -along
             if accumulated.magnitude >= threshold {
                 fired = true
-                action(accumulated < 0 ? .left : .right)
+                switch axis {
+                case .horizontal: action(accumulated < 0 ? .left : .right)
+                case .vertical: action(accumulated > 0 ? .down : .up)
+                }
             }
         }
 
@@ -233,20 +245,25 @@ private struct SwipeMonitor: NSViewRepresentable {
             guard let frame = frameInWindow(), frame.contains(point) else { return false }
             let area = frame.width * frame.height
             let smallerRegionContainsPoint = Self.registered.contains { other in
-                guard other !== self, other.view?.window === view?.window,
+                guard other !== self, other.axis == axis, other.view?.window === view?.window,
                       let otherFrame = other.frameInWindow() else { return false }
                 return otherFrame.contains(point) && otherFrame.width * otherFrame.height < area
             }
-            return !smallerRegionContainsPoint && !isOverHorizontalScrollContent(point)
+            return !smallerRegionContainsPoint && !isOverScrollableContent(point)
         }
 
-        private func isOverHorizontalScrollContent(_ point: CGPoint) -> Bool {
+        private func isOverScrollableContent(_ point: CGPoint) -> Bool {
             var hit = view?.window?.contentView?.hitTest(point)
             while let current = hit {
-                if current is NSSlider || current is NSTextView { return true }
-                if let scrollView = current as? NSScrollView, let document = scrollView.documentView,
-                   document.frame.width > scrollView.contentSize.width + 1 {
-                    return true
+                if current is NSSlider { return true }
+                // Sideways swipes over text would fight with selecting it; vertical ones only matter
+                // when the text is long enough to scroll, which the scroll view check below catches
+                if axis == .horizontal, current is NSTextView { return true }
+                if let scrollView = current as? NSScrollView, let document = scrollView.documentView {
+                    let overflows = axis == .horizontal
+                        ? document.frame.width > scrollView.contentSize.width + 1
+                        : document.frame.height > scrollView.contentSize.height + 1
+                    if overflows { return true }
                 }
                 hit = current.superview
             }
