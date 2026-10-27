@@ -20,6 +20,9 @@ class MusicManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var controllerCancellables = Set<AnyCancellable>()
     private var debounceIdleTask: Task<Void, Never>?
+    // Track whose lyrics were last requested; artwork arriving after the title also counts as a
+    // content change, and a second lookup could overwrite a good result with a rate-limit failure
+    private var lyricsTrackKey: String?
 
     // Helper to check if macOS has removed support for NowPlayingController
     public private(set) var isNowPlayingDeprecated: Bool = false
@@ -343,6 +346,7 @@ class MusicManager: ObservableObject {
     // MARK: - Lyrics
     private func fetchLyricsIfAvailable(bundleIdentifier: String?, title: String, artist: String) {
         guard Defaults[.enableLyrics], !title.isEmpty else {
+            lyricsTrackKey = nil
             DispatchQueue.main.async {
                 self.isFetchingLyrics = false
                 self.currentLyrics = ""
@@ -350,12 +354,16 @@ class MusicManager: ObservableObject {
             return
         }
 
+        let trackKey = "\(bundleIdentifier ?? "")|\(title)|\(artist)"
+        guard trackKey != lyricsTrackKey else { return }
+        lyricsTrackKey = trackKey
+
         // Prefer native Apple Music lyrics when available
         if let bundleIdentifier = bundleIdentifier, bundleIdentifier.contains("com.apple.Music") {
             Task { @MainActor in
                 let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music")
                 guard !runningApps.isEmpty else {
-                    await self.fetchLyricsFromWeb(title: title, artist: artist)
+                    await self.fetchLyricsFromWeb(title: title, artist: artist, trackKey: trackKey)
                     return
                 }
 
@@ -393,13 +401,13 @@ class MusicManager: ObservableObject {
                 } catch {
                     // fall through to web lookup
                 }
-                await self.fetchLyricsFromWeb(title: title, artist: artist)
+                await self.fetchLyricsFromWeb(title: title, artist: artist, trackKey: trackKey)
             }
         } else {
             Task { @MainActor in
                 self.isFetchingLyrics = true
                 self.currentLyrics = ""
-                await self.fetchLyricsFromWeb(title: title, artist: artist)
+                await self.fetchLyricsFromWeb(title: title, artist: artist, trackKey: trackKey)
             }
         }
     }
@@ -411,53 +419,86 @@ class MusicManager: ObservableObject {
     }
 
     @MainActor
-    private func fetchLyricsFromWeb(title: String, artist: String) async {
-        let cleanTitle = normalizedQuery(title)
-        let cleanArtist = normalizedQuery(artist)
-        guard let encodedTitle = cleanTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let encodedArtist = cleanArtist.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            self.currentLyrics = ""
-            self.isFetchingLyrics = false
+    private func fetchLyricsFromWeb(title: String, artist: String, trackKey: String) async {
+        let isCurrentTrack = { self.lyricsTrackKey == trackKey }
+
+        // LRCLIB simple search (no auth): https://lrclib.net/api/search?track_name=...&artist_name=...
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "lrclib.net"
+        components.path = "/api/search"
+        components.queryItems = [
+            URLQueryItem(name: "track_name", value: normalizedQuery(title)),
+            URLQueryItem(name: "artist_name", value: normalizedQuery(artist)),
+        ]
+        // URLComponents leaves "+" as-is, which the server would read as a space
+        let query = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        components.percentEncodedQuery = query
+        guard let url = components.url else {
+            applyLyrics(plain: "", synced: "")
             return
         }
 
-        // LRCLIB simple search (no auth): https://lrclib.net/api/search?track_name=...&artist_name=...
-        let urlString = "https://lrclib.net/api/search?track_name=\(encodedTitle)&artist_name=\(encodedArtist)"
-        guard let url = URL(string: urlString) else {
-            self.currentLyrics = ""
-            self.isFetchingLyrics = false
+        // LRCLIB rate-limits (429) and sheds load (5xx); retry those a couple of times before giving up
+        var results: [[String: Any]] = []
+        for delay in [0, 2, 5] {
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            guard isCurrentTrack() else { return }
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  let http = response as? HTTPURLResponse else { continue }
+            if http.statusCode == 429 || http.statusCode >= 500 { continue }
+            if http.statusCode == 200 {
+                results = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+            }
+            break
+        }
+        guard isCurrentTrack() else { return }
+
+        guard let best = bestLyricsMatch(in: results, title: title) else {
+            applyLyrics(plain: "", synced: "")
             return
         }
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                self.currentLyrics = ""
-                self.isFetchingLyrics = false
-                return
-            }
-            if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-               let first = jsonArray.first {
-                // Prefer plain lyrics (syncedLyrics may also be present)
-                let plain = (first["plainLyrics"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let synced = (first["syncedLyrics"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let resolved = plain.isEmpty ? synced : plain
-                self.currentLyrics = resolved
-                self.isFetchingLyrics = false
-                if !synced.isEmpty {
-                    self.syncedLyrics = self.parseLRC(synced)
-                } else {
-                    self.syncedLyrics = []
-                }
-            } else {
-                self.currentLyrics = ""
-                self.isFetchingLyrics = false
-                self.syncedLyrics = []
-            }
-        } catch {
-            self.currentLyrics = ""
-            self.isFetchingLyrics = false
-            self.syncedLyrics = []
+        applyLyrics(
+            plain: (best["plainLyrics"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            synced: (best["syncedLyrics"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        )
+    }
+
+    /// Search results often lead with snippets or other versions, so prefer the closest duration,
+    /// then an exact title match, then synced lyrics.
+    private func bestLyricsMatch(in results: [[String: Any]], title: String) -> [String: Any]? {
+        let candidates = results.filter { result in
+            let plain = (result["plainLyrics"] as? String) ?? ""
+            let synced = (result["syncedLyrics"] as? String) ?? ""
+            return !(result["instrumental"] as? Bool ?? false) && !(plain.isEmpty && synced.isEmpty)
         }
+        func durationGap(_ result: [String: Any]) -> Double {
+            guard songDuration > 0, let duration = result["duration"] as? Double else { return .greatestFiniteMagnitude }
+            return abs(duration - songDuration)
+        }
+        func hasSynced(_ result: [String: Any]) -> Bool {
+            !((result["syncedLyrics"] as? String) ?? "").isEmpty
+        }
+        func titleMatches(_ result: [String: Any]) -> Bool {
+            ((result["trackName"] as? String) ?? "").caseInsensitiveCompare(title) == .orderedSame
+        }
+        return candidates.min { lhs, rhs in
+            // Within a few seconds counts as the same recording
+            let lhsGap = durationGap(lhs), rhsGap = durationGap(rhs)
+            if abs(lhsGap - rhsGap) > 3 { return lhsGap < rhsGap }
+            if titleMatches(lhs) != titleMatches(rhs) { return titleMatches(lhs) }
+            return hasSynced(lhs) && !hasSynced(rhs)
+        }
+    }
+
+    @MainActor
+    private func applyLyrics(plain: String, synced: String) {
+        // Prefer plain lyrics (syncedLyrics may also be present)
+        currentLyrics = plain.isEmpty ? synced : plain
+        syncedLyrics = synced.isEmpty ? [] : parseLRC(synced)
+        isFetchingLyrics = false
     }
 
     // MARK: - Synced lyrics helpers
