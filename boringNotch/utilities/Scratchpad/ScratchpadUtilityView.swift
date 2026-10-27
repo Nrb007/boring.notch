@@ -238,6 +238,13 @@ struct ScratchpadEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
             parent.text = textView.string
+            MainActor.assumeIsolated { UtilitiesState.shared.noteTyping() }
+        }
+
+        // Moving the caret with the keyboard counts as typing too
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard textView?.window?.isKeyWindow == true else { return }
+            MainActor.assumeIsolated { UtilitiesState.shared.noteTyping() }
         }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {

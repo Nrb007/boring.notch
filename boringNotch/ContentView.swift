@@ -26,6 +26,7 @@ struct ContentView: View {
     @ObservedObject var calendarManager = CalendarManager.shared
     @ObservedObject var timerService = NotchTimerService.shared
     @ObservedObject var utilitiesState = UtilitiesState.shared
+    @ObservedObject var utilityActivities = UtilityActivityCenter.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -70,6 +71,8 @@ struct ContentView: View {
             chinWidth = 640
         } else if showTimerActivity {
             chinWidth += 2 * timerWingWidth
+        } else if showUtilityActivity {
+            chinWidth += 2 * utilityActivityWingWidth
         } else if showNextEventActivity {
             chinWidth += 2 * nextEventWingWidth
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
@@ -89,6 +92,7 @@ struct ContentView: View {
 
     private let nextEventWingWidth: CGFloat = 140
     private let timerWingWidth: CGFloat = 72
+    private let utilityActivityWingWidth: CGFloat = 96
 
     // Closed-notch album art: a little larger than the music activity's, with room around it
     private var closedArtworkSide: CGFloat { max(0, vm.effectiveClosedNotchHeight - 9) }
@@ -96,7 +100,13 @@ struct ContentView: View {
     private var showNextEventActivity: Bool {
         Defaults[.showNextEventInClosedNotch] && vm.notchState == .closed && !vm.hideOnClosed
             && !coordinator.expandingView.show && calendarManager.nextEvent != nil
-            && !showTimerActivity
+            && !showTimerActivity && !showUtilityActivity
+    }
+
+    // Another utility's closed-notch activity (a download, a Watch reading), after the timer
+    private var showUtilityActivity: Bool {
+        utilityActivities.current != nil && vm.notchState == .closed && !vm.hideOnClosed
+            && !coordinator.expandingView.show && !showTimerActivity
     }
 
     // A running or finished timer takes the closed notch over the next event and the music
@@ -199,6 +209,13 @@ struct ContentView: View {
                                     }
                                 }
                             }
+                        }
+                    }
+                    .onChange(of: utilitiesState.holdsNotchOpen) { _, holding in
+                        // Typing stopped with the mouse already gone: close now
+                        if !holding && !isHovering && vm.notchState == .open && !vm.isBatteryPopoverActive
+                            && !SharingStateManager.shared.preventNotchClose {
+                            vm.close()
                         }
                     }
                     .onChange(of: vm.notchState) { _, newState in
@@ -333,6 +350,10 @@ struct ContentView: View {
                               .transition(.opacity)
                               // Tapping the closed timer opens straight to its page
                               .simultaneousGesture(TapGesture().onEnded { utilitiesState.open(.timer) })
+                      } else if showUtilityActivity, let activity = utilityActivities.current {
+                          UtilityLiveActivity(activity, showAlbumArt: musicLiveActivityActive)
+                              .transition(.opacity)
+                              .simultaneousGesture(TapGesture().onEnded { utilitiesState.open(activity.id) })
                       } else if showNextEventActivity, let event = calendarManager.nextEvent {
                           NextEventLiveActivity(event: event, showAlbumArt: musicLiveActivityActive)
                               .transition(.opacity)
@@ -492,6 +513,50 @@ struct ContentView: View {
             }
             .padding(.trailing, 10)
             .frame(width: timerWingWidth, alignment: .trailing)
+        }
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
+    /// A utility's mark (or the album art while music plays) on the left, its reading on the right.
+    func UtilityLiveActivity(_ activity: UtilityActivity, showAlbumArt: Bool) -> some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                if showAlbumArt {
+                    closedAlbumArt
+                }
+                ZStack {
+                    if let progress = activity.progress {
+                        Circle()
+                            .stroke(activity.tint.opacity(0.25), lineWidth: 2.5)
+                        Circle()
+                            .trim(from: 0, to: max(0.02, min(1, progress)))
+                            .stroke(activity.tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(.smooth, value: progress)
+                    }
+                    Image(systemName: activity.symbol)
+                        .font(.system(size: activity.progress == nil ? 15 : 8, weight: .bold))
+                        .foregroundStyle(activity.tint)
+                }
+                .frame(width: 17, height: 17)
+            }
+            .padding(.leading, 8)
+            .frame(width: utilityActivityWingWidth, alignment: .leading)
+
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width)
+
+            Text(activity.text)
+                .font(.system(size: 12.5, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(activity.tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .contentTransition(.numericText())
+                .animation(.smooth(duration: 0.25), value: activity.text)
+                .padding(.trailing, 10)
+                .frame(width: utilityActivityWingWidth, alignment: .trailing)
         }
         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
     }
@@ -701,7 +766,8 @@ struct ContentView: View {
                         self.isHovering = false
                     }
                     
-                    if self.vm.notchState == .open && !self.vm.isBatteryPopoverActive && !SharingStateManager.shared.preventNotchClose {
+                    if self.vm.notchState == .open && !self.vm.isBatteryPopoverActive && !SharingStateManager.shared.preventNotchClose
+                        && !self.utilitiesState.holdsNotchOpen {
                         self.vm.close()
                     }
                 }

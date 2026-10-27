@@ -2,7 +2,7 @@
 //  UtilitiesSettings.swift
 //  boringNotch
 //
-//  Settings → Utilities: turn each utility on or off, plus each utility's own options.
+//  Settings → Utilities: turn each utility on or off; enabled ones show their own options below.
 //
 
 import Defaults
@@ -10,10 +10,6 @@ import SwiftUI
 
 struct UtilitiesSettings: View {
     @Default(.enabledUtilities) private var enabledIDs
-    @Default(.timerSoundEnabled) private var timerSoundEnabled
-    @Default(.timerShowsInClosedNotch) private var timerShowsInClosedNotch
-    @Default(.scratchpadRetention) private var scratchpadRetention
-    @Default(.scratchpadTextSize) private var scratchpadTextSize
 
     var body: some View {
         Form {
@@ -35,32 +31,18 @@ struct UtilitiesSettings: View {
                     .foregroundStyle(.secondary)
             }
 
-            if enabledIDs.contains(.timer) {
-                Section {
-                    Toggle("Ring when a timer finishes", isOn: $timerSoundEnabled)
-                    Toggle("Show the countdown in the closed notch", isOn: $timerShowsInClosedNotch)
-                } header: {
-                    Text("Timer")
-                }
-            }
-
-            if enabledIDs.contains(.scratchpad) {
-                Section {
-                    Picker("Clear notes left unedited", selection: $scratchpadRetention) {
-                        ForEach(ScratchpadRetention.allCases, id: \.self) { retention in
-                            Text(retention.title).tag(retention)
-                        }
+            ForEach(UtilityRegistry.all.filter { enabledIDs.contains($0.id) }) { utility in
+                if let makeSettings = utility.makeSettings {
+                    Section {
+                        makeSettings()
+                    } header: {
+                        Text(utility.title)
                     }
-                    Slider(value: $scratchpadTextSize, in: 11...18, step: 1) {
-                        Text("Text size - \(Int(scratchpadTextSize))")
-                    }
-                } header: {
-                    Text("Scratchpad")
                 }
             }
 
             Section {
-                Text("Timer and Scratchpad are adapted from Vorssaint (github.com/vorssaint/vorssaint-utils), used under the GNU GPL v3.")
+                Text("Timer, Scratchpad, Downloads, Clipboard and Watch are adapted from Vorssaint (github.com/vorssaint/vorssaint-utils), used under the GNU GPL v3.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
