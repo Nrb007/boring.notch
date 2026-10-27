@@ -87,6 +87,29 @@ final class UtilitiesState: ObservableObject {
     private var idleTask: Task<Void, Never>?
     private init() {}
 
+    /// A short message that pops out of the closed notch, e.g. a Watch rule being met.
+    @Published private(set) var notice: UtilityNotice?
+    private var noticeTask: Task<Void, Never>?
+    static let noticeDuration: Duration = .seconds(5)
+
+    func showNotice(_ utility: UtilityID, title: String, body: String) {
+        let notice = UtilityNotice(utility: utility, title: title, body: body)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { self.notice = notice }
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.noticeDuration)
+            guard !Task.isCancelled, self?.notice?.id == notice.id else { return }
+            self?.dismissNotice()
+        }
+    }
+
+    func dismissNotice() {
+        noticeTask?.cancel()
+        noticeTask = nil
+        guard notice != nil else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { notice = nil }
+    }
+
     func noteTyping() {
         if !holdsNotchOpen { holdsNotchOpen = true }
         idleTask?.cancel()
@@ -172,4 +195,11 @@ final class UtilityActivityCenter: ObservableObject {
             .filter { UtilityRegistry.isEnabled($0.id) }
             .max { $0.priority < $1.priority }
     }
+}
+
+struct UtilityNotice: Identifiable, Equatable {
+    let id = UUID()
+    let utility: UtilityID
+    let title: String
+    let body: String
 }

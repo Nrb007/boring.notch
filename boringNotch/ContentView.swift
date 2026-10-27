@@ -69,6 +69,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if showUtilityNotice {
+            chinWidth += 2 * noticeWingWidth
         } else if showTimerActivity {
             chinWidth += 2 * timerWingWidth
         } else if showUtilityActivity {
@@ -102,6 +104,13 @@ struct ContentView: View {
     private let nextEventWingWidth: CGFloat = 140
     private let timerWingWidth: CGFloat = 72
     private let utilityActivityWingWidth: CGFloat = 96
+    private let noticeWingWidth: CGFloat = 120
+
+    // A utility's notice pops out of the closed notch over everything but the battery notification
+    private var showUtilityNotice: Bool {
+        utilitiesState.notice != nil && vm.notchState == .closed && !vm.hideOnClosed
+            && !(coordinator.expandingView.show && coordinator.expandingView.type == .battery)
+    }
 
     // Closed-notch album art: a little larger than the music activity's, with room around it
     private var closedArtworkSide: CGFloat { max(0, vm.effectiveClosedNotchHeight - 9) }
@@ -225,24 +234,6 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .onReceive(NotificationCenter.default.publisher(for: .utilityNeedsAttention)) { note in
-                        // A utility has news: open to its page, and close again after a few seconds
-                        // unless the mouse came over to look
-                        guard let utility = note.object as? UtilityID else { return }
-                        utilitiesState.open(utility)
-                        guard vm.notchState == .closed else { return }
-                        doOpen()
-                        hoverTask?.cancel()
-                        hoverTask = Task {
-                            try? await Task.sleep(for: .seconds(5))
-                            guard !Task.isCancelled else { return }
-                            await MainActor.run {
-                                if vm.notchState == .open && !isHovering && !utilitiesState.holdsNotchOpen {
-                                    vm.close()
-                                }
-                            }
-                        }
-                    }
                     .onChange(of: utilitiesState.holdsNotchOpen) { _, holding in
                         // Typing stopped with the mouse already gone: close now
                         if !holding && !isHovering && vm.notchState == .open && !vm.isBatteryPopoverActive
@@ -251,6 +242,11 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: vm.notchState) { _, newState in
+                        // Opening the notch while a notice shows goes to the utility it's about
+                        if newState == .open, let notice = utilitiesState.notice {
+                            utilitiesState.open(notice.utility)
+                            utilitiesState.dismissNotice()
+                        }
                         if newState == .closed && isHovering {
                             withAnimation {
                                 isHovering = false
@@ -377,6 +373,13 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
+                      } else if showUtilityNotice, let notice = utilitiesState.notice {
+                          UtilityNoticeView(notice)
+                              .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .top)))
+                              .simultaneousGesture(TapGesture().onEnded {
+                                  utilitiesState.open(notice.utility)
+                                  utilitiesState.dismissNotice()
+                              })
                       } else if showTimerActivity {
                           TimerLiveActivity(showAlbumArt: musicLiveActivityActive)
                               .transition(.opacity)
@@ -551,6 +554,50 @@ struct ContentView: View {
             .frame(width: timerWingWidth, alignment: .trailing)
         }
         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
+    /// The utility's mark and name beside the camera, and the message underneath: the island grows
+    /// down to hold it, then shrinks back when the notice ends.
+    func UtilityNoticeView(_ notice: UtilityNotice) -> some View {
+        let utility = UtilityRegistry.utility(notice.utility)
+        let tint = utility?.tint ?? .white
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                Image(systemName: utility?.symbol ?? "bell")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .padding(.leading, 14)
+                    .frame(width: noticeWingWidth, alignment: .leading)
+                Rectangle()
+                    .fill(.black)
+                    .frame(width: vm.closedNotchSize.width)
+                Text(utility?.title ?? "")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                    .padding(.trailing, 14)
+                    .frame(width: noticeWingWidth, alignment: .trailing)
+            }
+            .frame(height: vm.effectiveClosedNotchHeight)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(notice.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if !notice.body.isEmpty {
+                    Text(notice.body)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .frame(width: vm.closedNotchSize.width + 2 * noticeWingWidth, alignment: .leading)
+        }
     }
 
     /// A utility's mark (or the album art while music plays) on the left, its reading on the right.

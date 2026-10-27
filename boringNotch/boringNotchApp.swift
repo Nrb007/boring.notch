@@ -284,8 +284,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // each only does anything while it's switched on in Settings → Utilities
         NotchDownloadService.shared.activate()
         ClipboardHistoryService.shared.activate()
-        // Handles clicks on utility notification banners (e.g. a Watch rule being met)
-        _ = UtilityNotifier.shared
 
         NotificationCenter.default.addObserver(
             self,

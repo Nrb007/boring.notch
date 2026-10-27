@@ -349,18 +349,15 @@ final class WatchService: ObservableObject {
         notify(outcome)
     }
 
-    /// A banner saying where and what, and the notch opening to the Watch page. The banner carries
-    /// the sound; without notification permission the tone plays instead.
+    /// Pops a notice out of the notch saying what happened and where, with the tone.
     private func notify(_ outcome: NotchWatchOutcome) {
-        let sound = Defaults[.watchSoundEnabled]
-        let place = [target?.appName, target?.windowTitle].compactMap { $0 }.filter { !$0.isEmpty }
-        var body = place.joined(separator: " — ")
+        var details = [target?.appName, target?.windowTitle].compactMap { $0 }.filter { !$0.isEmpty }
         if !headline.isEmpty, outcome == .changed || outcome == .settled {
-            body += body.isEmpty ? "Now: \(headline)" : "\nNow: \(headline)"
+            details.insert("Now \(headline)", at: 0)
         }
-        UtilityNotifier.shared.notify(.watch, title: outcome.title, body: body, sound: sound) { [weak self] delivered in
-            guard sound, !delivered, let self else { return }
-            if let tone = self.tone { tone.stop(); tone.play() } else { NSSound.beep() }
+        UtilitiesState.shared.showNotice(.watch, title: outcome.title, body: details.joined(separator: " · "))
+        if Defaults[.watchSoundEnabled] {
+            if let tone { tone.stop(); tone.play() } else { NSSound.beep() }
         }
     }
 
