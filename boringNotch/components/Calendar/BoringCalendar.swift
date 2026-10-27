@@ -27,8 +27,8 @@ struct WheelPicker: View {
     let config: Config
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: config.spacing) {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: config.spacing) {
                 let spacerNum = config.offset
                 let dateCount = totalDateItems()
                 let totalItems = dateCount + 2 * spacerNum
@@ -36,7 +36,7 @@ struct WheelPicker: View {
                     if index < spacerNum || index >= spacerNum + dateCount {
                         // Leading/trailing spacers sized to match a date cell
                         Spacer()
-                            .frame(width: 24, height: 24)
+                            .frame(width: 24, height: 40)
                             .id(index)
                     } else {
                         let date = dateForItemIndex(index: index, spacerNum: spacerNum)
@@ -54,13 +54,13 @@ struct WheelPicker: View {
                     }
                 }
             }
-            .frame(height: 50)
+            .frame(width: 40)
             .scrollTargetLayout()
         }
         .scrollIndicators(.never)
         .scrollPosition(id: $scrollPosition, anchor: .center)
         .scrollTargetBehavior(.viewAligned)  // Ensures scroll view snaps the centered view
-        .safeAreaPadding(.horizontal)
+        .safeAreaPadding(.vertical)
         .sensoryFeedback(.alignment, trigger: haptics)
         .onChange(of: scrollPosition) { oldValue, newValue in
             if !byClick {
@@ -89,12 +89,12 @@ struct WheelPicker: View {
     ) -> some View {
         let isToday = Calendar.current.isDateInToday(date)
         return Button(action: onClick) {
-            VStack(spacing: 8) {
+            VStack(spacing: 1) {
                 dayText(date: dateToString(for: date), isToday: isToday, isSelected: isSelected)
                 dateCircle(date: date, isToday: isToday, isSelected: isSelected)
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 4)
+            .frame(width: 34)
+            .padding(.vertical, 3)
             .background(isSelected ? Color.effectiveAccentBackground : Color.clear)
             .cornerRadius(8)
         }
@@ -104,7 +104,7 @@ struct WheelPicker: View {
 
     private func dayText(date: String, isToday: Bool, isSelected: Bool) -> some View {
         Text(date)
-            .font(.caption)
+            .font(.caption2)
             .foregroundColor(isSelected ? .white : Color(white: 0.65))
     }
 
@@ -184,47 +184,51 @@ struct CalendarView: View {
     @State private var selectedDate = Date()
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading) {
-                    Text(selectedDate.formatted(.dateTime.month(.abbreviated)))
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                    Text(selectedDate.formatted(.dateTime.year()))
-                        .font(.title3)
-                        .fontWeight(.light)
-                        .foregroundColor(Color(white: 0.65))
-                }
+        // Date picker runs down the left so the event list gets the full height
+        HStack(alignment: .top, spacing: 6) {
+            VStack(spacing: 2) {
+                Text(monthLabel)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
 
-                ZStack(alignment: .top) {
+                ZStack {
                     WheelPicker(selectedDate: $selectedDate, config: Config())
-                    HStack(alignment: .top) {
+                    VStack {
                         LinearGradient(
-                            colors: [Color.black, .clear], startPoint: .leading, endPoint: .trailing
+                            colors: [Color.black, .clear], startPoint: .top, endPoint: .bottom
                         )
-                        .frame(width: 20)
+                        .frame(height: 14)
                         Spacer()
                         LinearGradient(
-                            colors: [.clear, Color.black], startPoint: .leading, endPoint: .trailing
+                            colors: [.clear, Color.black], startPoint: .top, endPoint: .bottom
                         )
-                        .frame(width: 20)
+                        .frame(height: 14)
                     }
+                    .allowsHitTesting(false)
+                }
+                .clipped()
+            }
+            .frame(width: 40)
+
+            VStack(spacing: 0) {
+                let filteredEvents = EventListView.filteredEvents(
+                    events: calendarManager.events
+                )
+                if filteredEvents.isEmpty {
+                    EmptyEventsView(selectedDate: selectedDate)
+                        .frame(maxHeight: .infinity)
+                } else {
+                    EventListView(events: calendarManager.events)
                 }
             }
-
-            let filteredEvents = EventListView.filteredEvents(
-                events: calendarManager.events
-            )
-            if filteredEvents.isEmpty {
-                EmptyEventsView(selectedDate: selectedDate)
-                Spacer(minLength: 0)
-            } else {
-                EventListView(events: calendarManager.events)
-            }
+            .frame(maxWidth: .infinity)
         }
         .listRowBackground(Color.clear)
-        .frame(height: 120)
+        // Fill the height the music player next to it uses
+        .frame(maxHeight: .infinity)
         .onChange(of: selectedDate) {
             Task {
                 await calendarManager.updateCurrentDate(selectedDate)
@@ -242,6 +246,16 @@ struct CalendarView: View {
                 selectedDate = Date.now
             }
         }
+    }
+}
+
+extension CalendarView {
+    // Year is only shown when browsing outside the current one
+    fileprivate var monthLabel: String {
+        let isCurrentYear = Calendar.current.isDate(selectedDate, equalTo: Date(), toGranularity: .year)
+        return isCurrentYear
+            ? selectedDate.formatted(.dateTime.month(.abbreviated))
+            : selectedDate.formatted(.dateTime.month(.abbreviated).year(.twoDigits))
     }
 }
 
@@ -325,6 +339,7 @@ struct EventListView: View {
                     .listRowSeparator(.automatic)
                     .listRowSeparatorTint(.gray.opacity(0.2))
                     .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                 }
             }
             .listStyle(.plain)
@@ -367,7 +382,8 @@ struct EventListView: View {
                     .opacity(1.0)  // Ensure the toggle is always fully opaque
                     HStack {
                         Text(event.title)
-                            .font(.callout)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
                             .foregroundColor(.white)
                             .lineLimit(showFullEventTitles ? nil : 1)
                         Spacer(minLength: 0)
@@ -395,50 +411,49 @@ struct EventListView: View {
                 .padding(.vertical, 4)
             )
         } else {
+            // Title gets the full row width; time and location share one line underneath
             return AnyView(
-                HStack(alignment: .top, spacing: 4) {
-                    Rectangle()
+                HStack(alignment: .top, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1.5)
                         .fill(Color(event.calendar.color))
                         .frame(width: 3)
-                        .cornerRadius(1.5)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(event.title)
-                            .font(.callout)
-                            .fontWeight(.medium)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
                             .foregroundColor(.white)
-                            .lineLimit(showFullEventTitles ? nil : 2)
+                            .lineLimit(showFullEventTitles ? nil : 1)
+                            .truncationMode(.tail)
 
-                        if let location = event.location, !location.isEmpty {
-                            Text(location)
-                                .font(.caption)
-                                .foregroundColor(Color(white: 0.65))
-                                .lineLimit(1)
-                        }
+                        Text(eventDetailLine(event))
+                            .font(.caption)
+                            .foregroundColor(event.eventStatus == .inProgress ? .white : Color(white: 0.6))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                     Spacer(minLength: 0)
-                    VStack(alignment: .trailing, spacing: 4) {
-                        if event.isAllDay {
-                            Text("All-day")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                        } else {
-                            Text(event.start, style: .time)
-                                .foregroundColor(.white)
-                            Text(event.end, style: .time)
-                                .foregroundColor(Color(white: 0.65))
-                        }
-                    }
-                    .font(.caption)
-                    .frame(minWidth: 44, alignment: .trailing)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .opacity(
                     event.eventStatus == .ended && Calendar.current.isDateInToday(event.start)
-                        ? 0.6 : 1.0)
+                        ? 0.5 : 1.0)
             )
         }
+    }
+
+    private func eventDetailLine(_ event: EventModel) -> String {
+        let time: String
+        if event.isAllDay {
+            time = "All-day"
+        } else if event.eventStatus == .inProgress {
+            time = "Now – \(event.end.formatted(date: .omitted, time: .shortened))"
+        } else {
+            time = (event.start..<event.end).formatted(.interval.hour().minute())
+        }
+        guard let location = event.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !location.isEmpty else { return time }
+        return "\(time) · \(location)"
     }
 }
 
