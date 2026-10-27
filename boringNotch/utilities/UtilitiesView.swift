@@ -34,13 +34,31 @@ struct UtilitiesView: View {
         .padding(.horizontal, 4)
     }
 
+    private static let tileMinWidth: CGFloat = 104
+    private static let tileMinHeight: CGFloat = 64
+    private static let tileSpacing: CGFloat = 8
+
+    /// As many columns as fit (never more than there are tiles), and tiles that stretch to fill
+    /// the page: a single row takes the whole height.
     private var grid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104, maximum: 160), spacing: 8)], spacing: 8) {
-            ForEach(enabled) { utility in
-                UtilityTile(utility: utility) {
-                    state.open(utility.id)
+        GeometryReader { geo in
+            let spacing = Self.tileSpacing
+            let fitting = max(1, Int((geo.size.width + spacing) / (Self.tileMinWidth + spacing)))
+            let columns = min(enabled.count, fitting)
+            let rows = Int(ceil(Double(enabled.count) / Double(columns)))
+            let tileHeight = max(Self.tileMinHeight,
+                                 (geo.size.height - spacing * CGFloat(rows - 1)) / CGFloat(rows))
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns),
+                          spacing: spacing) {
+                    ForEach(enabled) { utility in
+                        UtilityTile(utility: utility, height: tileHeight) {
+                            state.open(utility.id)
+                        }
+                    }
                 }
             }
+            .scrollDisabled(tileHeight > Self.tileMinHeight)
         }
         .padding(.top, 4)
     }
@@ -63,23 +81,29 @@ struct UtilitiesView: View {
 
 private struct UtilityTile: View {
     let utility: NotchUtility
+    let height: CGFloat
     let action: () -> Void
     @State private var hovering = false
+
+    // Tiles that grew to fill the page get a larger icon, with the name at the bottom
+    private var isLarge: Bool { height >= 96 }
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 Image(systemName: utility.symbol)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: isLarge ? 26 : 18, weight: .semibold))
                     .foregroundStyle(utility.tint)
+                Spacer(minLength: 0)
                 Text(utility.title)
-                    .font(.subheadline)
+                    .font(isLarge ? .headline : .subheadline)
                     .fontWeight(.medium)
                     .foregroundStyle(.white)
                     .lineLimit(1)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .padding(isLarge ? 14 : 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: height)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.white.opacity(hovering ? 0.14 : 0.08))
