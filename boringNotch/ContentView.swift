@@ -186,6 +186,13 @@ struct ContentView: View {
                                 handleUpGesture(translation: translation, phase: phase)
                             }
                     }
+                    // Pull down with two fingers anywhere in the open notch, including the header under
+                    // the camera, to go from a utility page back to the tiles
+                    .onVerticalSwipe { direction in
+                        guard direction == .down, vm.notchState == .open,
+                              coordinator.currentView == .utilities, utilitiesState.openUtility != nil else { return }
+                        utilitiesState.close()
+                    }
                     .onHorizontalSwipe { direction in
                         // Swipe left for the next tab, right for the previous one
                         guard vm.notchState == .open else { return }

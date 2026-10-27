@@ -32,12 +32,6 @@ struct UtilitiesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, 4)
-        .contentShape(Rectangle())
-        // Pull down with two fingers on a utility page to get back to the tiles
-        .onVerticalSwipe { direction in
-            guard direction == .down, state.openUtility != nil else { return }
-            state.close()
-        }
     }
 
     private var grid: some View {
