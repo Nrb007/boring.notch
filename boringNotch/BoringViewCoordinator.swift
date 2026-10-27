@@ -51,6 +51,21 @@ class BoringViewCoordinator: ObservableObject {
     static let shared = BoringViewCoordinator()
 
     @Published var currentView: NotchViews = .home
+    /// Which way the last tab switch went, so the content slides in from that side.
+    @Published private(set) var tabSwitchForward = true
+    /// Switches tabs with a quick sideways slide toward the new tab's side of the tab bar.
+    func switchTab(to view: NotchViews) {
+        guard view != currentView else { return }
+        let order = tabs.map(\.view)
+        tabSwitchForward = (order.firstIndex(of: view) ?? 0) > (order.firstIndex(of: currentView) ?? 0)
+        // Let the new direction land before the switch, so both the outgoing and incoming views use it
+        DispatchQueue.main.async {
+            withAnimation(.smooth(duration: 0.22)) {
+                self.currentView = view
+            }
+        }
+    }
+
     @Published var helloAnimationRunning: Bool = false
     private var sneakPeekDispatch: DispatchWorkItem?
     private var expandingViewDispatch: DispatchWorkItem?

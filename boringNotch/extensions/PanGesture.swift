@@ -150,7 +150,7 @@ extension View {
     /// Fires once per two-finger horizontal trackpad swipe over this view. Overlapping swipe regions
     /// don't double-fire: only the smallest one under the pointer handles the swipe, and swipes over
     /// content that scrolls horizontally (e.g. the calendar's date strip) are left to that content.
-    func onHorizontalSwipe(threshold: CGFloat = 40, perform action: @escaping (PanDirection) -> Void) -> some View {
+    func onHorizontalSwipe(threshold: CGFloat = 24, perform action: @escaping (PanDirection) -> Void) -> some View {
         background(SwipeMonitor(axis: .horizontal, threshold: threshold, action: action))
     }
 

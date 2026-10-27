@@ -90,6 +90,15 @@ struct ContentView: View {
         return chinWidth
     }
 
+    // Tabs slide sideways toward where the new tab sits in the tab bar
+    private var tabTransition: AnyTransition {
+        let shift: CGFloat = coordinator.tabSwitchForward ? 60 : -60
+        return .asymmetric(
+            insertion: .offset(x: shift).combined(with: .opacity),
+            removal: .offset(x: -shift).combined(with: .opacity)
+        )
+    }
+
     private let nextEventWingWidth: CGFloat = 140
     private let timerWingWidth: CGFloat = 72
     private let utilityActivityWingWidth: CGFloat = 96
@@ -200,9 +209,7 @@ struct ContentView: View {
                         guard let index = views.firstIndex(of: coordinator.currentView) else { return }
                         let next = direction == .left ? index + 1 : index - 1
                         guard views.indices.contains(next) else { return }
-                        withAnimation(.smooth) {
-                            coordinator.currentView = views[next]
-                        }
+                        coordinator.switchTab(to: views[next])
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .sharingDidFinish)) { _ in
                         if vm.notchState == .open && !isHovering && !vm.isBatteryPopoverActive {
@@ -421,14 +428,18 @@ struct ContentView: View {
               .zIndex(2)
             if vm.notchState == .open {
                 VStack {
-                    switch coordinator.currentView {
-                    case .home:
-                        NotchHomeView(albumArtNamespace: albumArtNamespace)
-                    case .shelf:
-                        ShelfView()
-                    case .utilities:
-                        UtilitiesView()
+                    Group {
+                        switch coordinator.currentView {
+                        case .home:
+                            NotchHomeView(albumArtNamespace: albumArtNamespace)
+                        case .shelf:
+                            ShelfView()
+                        case .utilities:
+                            UtilitiesView()
+                        }
                     }
+                    .id(coordinator.currentView)
+                    .transition(tabTransition)
                 }
                 .transition(
                     .scale(scale: 0.8, anchor: .top)

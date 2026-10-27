@@ -35,13 +35,11 @@ struct TabSelectionView: View {
         HStack(spacing: 0) {
             ForEach(tabs) { tab in
                     TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view) {
-                        withAnimation(.smooth) {
-                            // Clicking Utilities again goes back to its grid
-                            if tab.view == .utilities && coordinator.currentView == .utilities {
-                                UtilitiesState.shared.close()
-                            }
-                            coordinator.currentView = tab.view
+                        // Clicking Utilities again goes back to its grid
+                        if tab.view == .utilities && coordinator.currentView == .utilities {
+                            UtilitiesState.shared.close()
                         }
+                        coordinator.switchTab(to: tab.view)
                     }
                     .frame(height: 26)
                     .foregroundStyle(tab.view == coordinator.currentView ? .white : .gray)
