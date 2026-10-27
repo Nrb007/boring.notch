@@ -225,6 +225,24 @@ struct ContentView: View {
                             }
                         }
                     }
+                    .onReceive(NotificationCenter.default.publisher(for: .utilityNeedsAttention)) { note in
+                        // A utility has news: open to its page, and close again after a few seconds
+                        // unless the mouse came over to look
+                        guard let utility = note.object as? UtilityID else { return }
+                        utilitiesState.open(utility)
+                        guard vm.notchState == .closed else { return }
+                        doOpen()
+                        hoverTask?.cancel()
+                        hoverTask = Task {
+                            try? await Task.sleep(for: .seconds(5))
+                            guard !Task.isCancelled else { return }
+                            await MainActor.run {
+                                if vm.notchState == .open && !isHovering && !utilitiesState.holdsNotchOpen {
+                                    vm.close()
+                                }
+                            }
+                        }
+                    }
                     .onChange(of: utilitiesState.holdsNotchOpen) { _, holding in
                         // Typing stopped with the mouse already gone: close now
                         if !holding && !isHovering && vm.notchState == .open && !vm.isBatteryPopoverActive
