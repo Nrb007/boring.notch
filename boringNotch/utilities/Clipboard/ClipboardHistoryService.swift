@@ -832,15 +832,3 @@ enum ClipboardImageStore {
         }
     }
 }
-
-/// Lets the Objective-C launch hook (ClipboardLaunchHook.m) start the history
-/// once the app has finished launching, so it records from launch and not
-/// only once the page has been opened.
-@objc(BNClipboardHistoryLaunch)
-final class ClipboardHistoryLaunch: NSObject {
-    @objc static func start() {
-        MainActor.assumeIsolated {
-            ClipboardHistoryService.shared.activate()
-        }
-    }
-}
