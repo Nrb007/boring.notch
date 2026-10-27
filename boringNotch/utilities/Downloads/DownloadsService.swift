@@ -68,8 +68,8 @@ final class NotchDownloadService: ObservableObject {
 
     private init() {}
 
-    /// Starts following the utility's switch. Safe to call any number of times; the launch hook
-    /// calls it once the app is running, and the page calls it too in case the hook didn't run.
+    /// Starts following the utility's switch. Safe to call any number of times; the app calls it
+    /// at launch, and the page calls it too.
     func activate() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard preferenceObservers.isEmpty else { return }
@@ -329,15 +329,5 @@ final class NotchDownloadService: ObservableObject {
                                    progress: nil, priority: 10)
         }
         return nil
-    }
-}
-
-/// Starts the Downloads monitor at launch, without the page ever being opened. The utilities
-/// framework has no launch hook of its own, so DownloadsLaunchHook.m calls this from `+load`
-/// (deferred to the main queue, i.e. once the app is running). Looked up by its Objective-C name.
-@objc(BNDownloadsLaunchHook)
-final class DownloadsLaunchHook: NSObject {
-    @objc static func startAtLaunch() {
-        NotchDownloadService.shared.activate()
     }
 }

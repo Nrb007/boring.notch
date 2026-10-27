@@ -280,6 +280,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Utilities that work in the background, whether or not their page has been opened;
+        // each only does anything while it's switched on in Settings → Utilities
+        NotchDownloadService.shared.activate()
 
         NotificationCenter.default.addObserver(
             self,
