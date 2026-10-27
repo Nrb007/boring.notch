@@ -95,7 +95,8 @@ class BoringViewModel: NSObject, ObservableObject {
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] shouldHide in
-                withAnimation(.smooth) {
+                // Quick, so the notch is out of the way by the time a fullscreen app has settled
+                withAnimation(.smooth(duration: 0.18)) {
                     self?.hideOnClosed = shouldHide
                 }
             }
