@@ -83,15 +83,16 @@ struct ContentView: View {
         return chinWidth
     }
 
-    private let nextEventWingWidth: CGFloat = 110
-    // How soon an event must be for it to take over from the music live activity
-    private let nextEventPriorityWindow: TimeInterval = 15 * 60
+    private let nextEventWingWidth: CGFloat = 130
 
     private var showNextEventActivity: Bool {
-        guard Defaults[.showNextEventInClosedNotch], vm.notchState == .closed, !vm.hideOnClosed,
-              !coordinator.expandingView.show, let event = calendarManager.nextEvent else { return false }
-        let musicActive = (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled
-        return !musicActive || event.start.timeIntervalSinceNow <= nextEventPriorityWindow
+        Defaults[.showNextEventInClosedNotch] && vm.notchState == .closed && !vm.hideOnClosed
+            && !coordinator.expandingView.show && calendarManager.nextEvent != nil
+    }
+
+    // While music is active the event view also carries the album art (in place of the waveform)
+    private var musicLiveActivityActive: Bool {
+        (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled
     }
 
     var body: some View {
@@ -309,7 +310,7 @@ struct ContentView: View {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
                       } else if showNextEventActivity, let event = calendarManager.nextEvent {
-                          NextEventLiveActivity(event: event)
+                          NextEventLiveActivity(event: event, showAlbumArt: musicLiveActivityActive)
                               .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
@@ -388,9 +389,24 @@ struct ContentView: View {
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))
     }
 
-    func NextEventLiveActivity(event: EventModel) -> some View {
+    func NextEventLiveActivity(event: EventModel, showAlbumArt: Bool) -> some View {
         HStack(spacing: 0) {
             HStack(spacing: 5) {
+                if showAlbumArt {
+                    Image(nsImage: musicManager.albumArt)
+                        .resizable()
+                        .clipped()
+                        .clipShape(
+                            RoundedRectangle(
+                                cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
+                        )
+                        .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
+                        .frame(
+                            width: max(0, vm.effectiveClosedNotchHeight - 12),
+                            height: max(0, vm.effectiveClosedNotchHeight - 12)
+                        )
+                        .padding(.trailing, 3)
+                }
                 Circle()
                     .fill(Color(nsColor: event.calendar.color))
                     .frame(width: 6, height: 6)
