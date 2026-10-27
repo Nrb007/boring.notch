@@ -25,6 +25,13 @@ final class VolumeManager: NSObject, ObservableObject {
     private var previousVolumeBeforeMute: Float32 = 0.2
     private var softwareMuted: Bool = false
 
+    // Device whose volume/mute we're currently listening to, and the listeners registered on it
+    private var observedDeviceID: AudioObjectID = kAudioObjectUnknown
+    private var observedAddresses: [AudioObjectPropertyAddress] = []
+    private lazy var deviceListener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        self?.fetchCurrentVolume()
+    }
+
     private override init() {
         super.init()
         setupAudioListener()
@@ -170,53 +177,62 @@ final class VolumeManager: NSObject, ObservableObject {
     }
 
     private func setupAudioListener() {
-        let deviceID = systemOutputDeviceID()
-        guard deviceID != kAudioObjectUnknown else { return }
-
         var defaultDevAddr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
         AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &defaultDevAddr, nil
-        ) { _, _ in
-            self.fetchCurrentVolume()
+            AudioObjectID(kAudioObjectSystemObject), &defaultDevAddr, DispatchQueue.main
+        ) { [weak self] _, _ in
+            self?.observeCurrentOutputDevice()
+            self?.fetchCurrentVolume()
         }
 
+        observeCurrentOutputDevice()
+    }
+
+    // Volume/mute listeners are per-device, so move them over whenever the default output changes
+    // (e.g. switching to AirPods); otherwise changes made elsewhere on the new device are missed.
+    private func observeCurrentOutputDevice() {
+        let deviceID = systemOutputDeviceID()
+        guard deviceID != observedDeviceID else { return }
+
+        for var addr in observedAddresses {
+            AudioObjectRemovePropertyListenerBlock(observedDeviceID, &addr, DispatchQueue.main, deviceListener)
+        }
+        observedAddresses = []
+        observedDeviceID = deviceID
+        guard deviceID != kAudioObjectUnknown else { return }
+
+        var candidates: [AudioObjectPropertyAddress] = []
         var masterAddr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyVolumeScalar,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
         if AudioObjectHasProperty(deviceID, &masterAddr) {
-            AudioObjectAddPropertyListenerBlock(deviceID, &masterAddr, nil) { _, _ in
-                self.fetchCurrentVolume()
-            }
+            candidates.append(masterAddr)
         } else {
             for ch in [UInt32(1), UInt32(2)] {
-                var chAddr = AudioObjectPropertyAddress(
+                candidates.append(AudioObjectPropertyAddress(
                     mSelector: kAudioDevicePropertyVolumeScalar,
                     mScope: kAudioDevicePropertyScopeOutput,
                     mElement: ch
-                )
-                if AudioObjectHasProperty(deviceID, &chAddr) {
-                    AudioObjectAddPropertyListenerBlock(deviceID, &chAddr, nil) { _, _ in
-                        self.fetchCurrentVolume()
-                    }
-                }
+                ))
             }
         }
 
         // Mute
-        var muteAddr = AudioObjectPropertyAddress(
+        candidates.append(AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
-        )
-        if AudioObjectHasProperty(deviceID, &muteAddr) {
-            AudioObjectAddPropertyListenerBlock(deviceID, &muteAddr, nil) { _, _ in
-                self.fetchCurrentVolume()
+        ))
+
+        for var addr in candidates where AudioObjectHasProperty(deviceID, &addr) {
+            if AudioObjectAddPropertyListenerBlock(deviceID, &addr, DispatchQueue.main, deviceListener) == noErr {
+                observedAddresses.append(addr)
             }
         }
     }
