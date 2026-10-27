@@ -23,16 +23,32 @@ class CalendarManager: ObservableObject {
     @Published var selectedCalendarIDs: Set<String> = []
     @Published var calendarAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     @Published var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
+    /// Next timed event starting within the next 24 hours, for the closed-notch countdown
+    @Published var nextEvent: EventModel?
     private var selectedCalendars: [CalendarModel] = []
     private let calendarService = CalendarService()
 
     private var eventStoreChangedObserver: NSObjectProtocol?
+    private var nextEventSettingTask: Task<Void, Never>?
+    private var nextEventRefreshTask: Task<Void, Never>?
 
     private init() {
         self.currentWeekStartDate = CalendarManager.startOfDay(Date())
         setupEventStoreChangedObserver()
         Task {
             await reloadCalendarAndReminderLists()
+        }
+        nextEventSettingTask = Task { [weak self] in
+            for await _ in Defaults.updates(.showNextEventInClosedNotch) {
+                await self?.refreshNextEvent()
+            }
+        }
+        // Re-check every minute so the countdown moves on once an event starts
+        nextEventRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                await self?.refreshNextEvent()
+            }
         }
     }
 
@@ -61,6 +77,30 @@ class CalendarManager: ObservableObject {
         self.reminderLists = all.filter { $0.isReminder }
         self.allCalendars = all // for legacy compatibility, can be removed if not needed
         updateSelectedCalendars()
+        await refreshNextEvent()
+    }
+
+    func refreshNextEvent() async {
+        guard Defaults[.showNextEventInClosedNotch] else {
+            nextEvent = nil
+            return
+        }
+        let now = Date()
+        let upcoming = await calendarService.events(
+            from: now,
+            to: now.addingTimeInterval(24 * 60 * 60),
+            calendars: selectedCalendars.map { $0.id }
+        )
+        let next = upcoming
+            .filter { event in
+                guard !event.isAllDay, event.start > now else { return false }
+                if case .event(let status) = event.type { return status != .declined }
+                return false
+            }
+            .min { $0.start < $1.start }
+        if next != nextEvent {
+            nextEvent = next
+        }
     }
 
     func checkCalendarAuthorization() async {
@@ -172,6 +212,7 @@ class CalendarManager: ObservableObject {
         Defaults[.calendarSelectionState] = selectionState
         updateSelectedCalendars()
         await updateEvents()
+        await refreshNextEvent()
     }
 
     static func startOfDay(_ date: Date) -> Date {

@@ -731,6 +731,9 @@ struct CalendarSettings: View {
             Defaults.Toggle(key: .showFullEventTitles) {
                 Text("Always show full event titles")
             }
+            Defaults.Toggle(key: .showNextEventInClosedNotch) {
+                Text("Show next event in closed notch")
+            }
             Section(header: Text("Calendars")) {
                 if calendarManager.calendarAuthorizationStatus != .fullAccess {
                     Text("Calendar access is denied. Please enable it in System Settings.")

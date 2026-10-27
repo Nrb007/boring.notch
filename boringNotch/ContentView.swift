@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var calendarManager = CalendarManager.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -65,6 +66,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if showNextEventActivity {
+            chinWidth += 2 * nextEventWingWidth
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
             && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
@@ -78,6 +81,17 @@ struct ContentView: View {
         }
 
         return chinWidth
+    }
+
+    private let nextEventWingWidth: CGFloat = 110
+    // How soon an event must be for it to take over from the music live activity
+    private let nextEventPriorityWindow: TimeInterval = 15 * 60
+
+    private var showNextEventActivity: Bool {
+        guard Defaults[.showNextEventInClosedNotch], vm.notchState == .closed, !vm.hideOnClosed,
+              !coordinator.expandingView.show, let event = calendarManager.nextEvent else { return false }
+        let musicActive = (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled
+        return !musicActive || event.start.timeIntervalSinceNow <= nextEventPriorityWindow
     }
 
     var body: some View {
@@ -294,6 +308,9 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
+                      } else if showNextEventActivity, let event = calendarManager.nextEvent {
+                          NextEventLiveActivity(event: event)
+                              .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
@@ -369,6 +386,43 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))
+    }
+
+    func NextEventLiveActivity(event: EventModel) -> some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(Color(nsColor: event.calendar.color))
+                    .frame(width: 6, height: 6)
+                Text(event.title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.leading, 10)
+            .frame(width: nextEventWingWidth, alignment: .leading)
+
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width)
+
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                Text(countdownText(to: event.start, from: context.date))
+                    .monospacedDigit()
+                    .foregroundStyle(.gray)
+            }
+            .padding(.trailing, 10)
+            .frame(width: nextEventWingWidth, alignment: .trailing)
+        }
+        .font(.subheadline)
+        .foregroundStyle(.white)
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
+    private func countdownText(to start: Date, from now: Date) -> String {
+        let minutes = Int(ceil(start.timeIntervalSince(now) / 60))
+        guard minutes > 0 else { return "now" }
+        let hours = minutes / 60
+        return hours > 0 ? "in \(hours)h \(minutes % 60)m" : "in \(minutes)m"
     }
 
     @ViewBuilder
