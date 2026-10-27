@@ -192,6 +192,9 @@ struct MusicControlsView: View {
         GeometryReader { geo in
             VStack(alignment: .leading, spacing: 4) {
                 songInfo(width: geo.size.width)
+                    // Clicking the song's title opens the player app, like clicking the cover
+                    .contentShape(Rectangle())
+                    .onTapGesture { musicManager.openMusicApp() }
                     .offset(x: songInfoOffset)
                     .opacity(songInfoOpacity)
                 musicSlider

@@ -700,7 +700,9 @@ class MusicManager: ObservableObject {
         }
     }
     func openMusicApp() {
-        guard let bundleID = bundleIdentifier else {
+        // Before anything has played (e.g. Spotify isn't running yet) there's no app on record,
+        // so open the one chosen as the media source
+        guard let bundleID = bundleIdentifier ?? Self.bundleIdentifier(for: Defaults[.mediaController]) else {
             print("Error: appBundleIdentifier is nil")
             return
         }
@@ -717,6 +719,14 @@ class MusicManager: ObservableObject {
             }
         } else {
             print("Failed to find app with bundle ID: \(bundleID)")
+        }
+    }
+
+    private static func bundleIdentifier(for source: MediaControllerType) -> String? {
+        switch source {
+        case .spotify: return "com.spotify.client"
+        case .appleMusic, .nowPlaying: return "com.apple.Music"
+        case .youtubeMusic: return "com.github.th-ch.youtube-music"
         }
     }
 
