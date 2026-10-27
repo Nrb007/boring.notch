@@ -193,6 +193,13 @@ struct BoringBatteryView: View {
             }
         }) {
             HStack {
+                // macOS reports -1 while it's still estimating, so this appears about a minute after plugging in
+                if isCharging && timeToFullCharge > 0 && !isForNotification {
+                    Label(timeToFullChargeText, systemImage: "clock")
+                        .labelStyle(.titleAndIcon)
+                        .font(.callout)
+                        .foregroundStyle(.gray)
+                }
                 if Defaults[.showBatteryPercentage] {
                     Text("\(Int32(levelBattery))%")
                         .font(.callout)
@@ -240,6 +247,12 @@ struct BoringBatteryView: View {
             hideTask?.cancel()
             hideTask = nil
         }
+    }
+
+    private var timeToFullChargeText: String {
+        let hours = timeToFullCharge / 60
+        let minutes = timeToFullCharge % 60
+        return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
     }
 
     private func scheduleHideIfNeeded() {
