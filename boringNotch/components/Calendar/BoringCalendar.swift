@@ -20,6 +20,7 @@ struct Config: Equatable {
 
 struct WheelPicker: View {
     @EnvironmentObject var vm: BoringViewModel
+    @ObservedObject private var musicManager = MusicManager.shared
     @Binding var selectedDate: Date
     @State private var scrollPosition: Int?
     @State private var haptics: Bool = false
@@ -95,7 +96,7 @@ struct WheelPicker: View {
             }
             .frame(width: 34)
             .padding(.vertical, 3)
-            .background(isSelected ? Color.effectiveAccentBackground : Color.clear)
+            .background(isSelected ? accent.opacity(0.3) : Color.clear)
             .cornerRadius(8)
         }
         .buttonStyle(PlainButtonStyle())
@@ -111,7 +112,7 @@ struct WheelPicker: View {
     private func dateCircle(date: Date, isToday: Bool, isSelected: Bool) -> some View {
         ZStack {
             Circle()
-                .fill(isToday ? Color.effectiveAccent : .clear)
+                .fill(isToday ? accent : .clear)
                 .frame(width: 20, height: 20)
                 .overlay(
                     Circle()
@@ -122,6 +123,14 @@ struct WheelPicker: View {
                 .fontWeight(.medium)
                 .foregroundColor(isSelected ? .white : Color(white: isToday ? 0.9 : 0.65))
         }
+    }
+
+    // Matches the album art's color like the music player; with nothing playing there's
+    // no cover to take it from, so fall back to the system accent
+    private var accent: Color {
+        musicManager.isPlayerIdle
+            ? .effectiveAccent
+            : Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.45)
     }
 
     func handleScrollChange(newValue: Int?, config: Config) {
