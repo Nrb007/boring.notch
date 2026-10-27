@@ -10,6 +10,7 @@ import AVFoundation
 import SwiftUI
 
 struct MirrorUtilityView: View {
+    @EnvironmentObject private var vm: BoringViewModel
     @ObservedObject private var webcam = WebcamManager.shared
 
     var body: some View {
@@ -21,6 +22,8 @@ struct MirrorUtilityView: View {
                 if let previewLayer = webcam.previewLayer, webcam.isSessionRunning {
                     CameraPreviewLayerView(previewLayer: previewLayer)
                         .scaleEffect(x: -1, y: 1)
+                        // The camera's own 16:9 frame, as large as the page allows
+                        .aspectRatio(16 / 9, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .transition(.opacity)
                 } else {
@@ -29,8 +32,15 @@ struct MirrorUtilityView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onAppear(perform: start)
-        .onDisappear { webcam.stopSession() }
+        .onAppear {
+            // The viewfinder needs more height than a normal page
+            vm.setOpenHeight(tallOpenNotchHeight)
+            start()
+        }
+        .onDisappear {
+            vm.setOpenHeight(openNotchSize.height)
+            webcam.stopSession()
+        }
     }
 
     @ViewBuilder

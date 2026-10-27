@@ -189,6 +189,14 @@ class BoringViewModel: NSObject, ObservableObject {
         return false
     }
 
+    /// Grows (or restores) the open notch's height while a page that needs more room is showing.
+    func setOpenHeight(_ height: CGFloat) {
+        guard notchState == .open, notchSize.height != height else { return }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.85)) {
+            notchSize = CGSize(width: openNotchSize.width, height: height)
+        }
+    }
+
     func open() {
         self.notchSize = openNotchSize
         self.notchState = .open
