@@ -14,12 +14,71 @@ import SwiftUI
 
 struct MusicPlayerView: View {
     @EnvironmentObject var vm: BoringViewModel
+    @ObservedObject var musicManager = MusicManager.shared
     let albumArtNamespace: Namespace.ID
+
+    // Swipe-to-skip animation: the art and song info slide out in the swipe direction,
+    // then the new track slides in from the opposite side once it arrives
+    @State private var slideOffset: CGFloat = 0
+    @State private var slideOpacity: Double = 1
+    @State private var pendingSlideIn: PanDirection?
+    @State private var slideInFallback: Task<Void, Never>?
+    private let slideDistance: CGFloat = 40
 
     var body: some View {
         HStack {
-            AlbumArtView(vm: vm, albumArtNamespace: albumArtNamespace).padding(.all, 5)
-            MusicControlsView().drawingGroup().compositingGroup()
+            AlbumArtView(vm: vm, albumArtNamespace: albumArtNamespace)
+                .onHorizontalSwipe(perform: handleSwipe)
+                .offset(x: slideOffset)
+                .opacity(slideOpacity)
+                .padding(.all, 5)
+            MusicControlsView(songInfoOffset: slideOffset, songInfoOpacity: slideOpacity)
+                .drawingGroup().compositingGroup()
+        }
+        .onChange(of: musicManager.songTitle) { _, _ in slideIn() }
+        .onChange(of: musicManager.artistName) { _, _ in slideIn() }
+    }
+
+    private func handleSwipe(_ direction: PanDirection) {
+        pendingSlideIn = direction
+        withAnimation(.easeIn(duration: 0.15)) {
+            slideOffset = direction == .left ? -slideDistance : slideDistance
+            slideOpacity = 0
+        }
+
+        if direction == .left {
+            musicManager.nextTrack()
+        } else {
+            musicManager.previousTrack()
+        }
+
+        // "Previous" can just restart the current song, so don't wait forever for a track change
+        slideInFallback?.cancel()
+        slideInFallback = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            slideIn()
+        }
+    }
+
+    private func slideIn() {
+        guard let direction = pendingSlideIn else { return }
+        pendingSlideIn = nil
+        slideInFallback?.cancel()
+
+        // Jump (invisibly) to the opposite side, then animate in on the next frame so the
+        // spring starts from there rather than from where the slide-out ended
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            slideOffset = direction == .left ? slideDistance : -slideDistance
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(16))
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                slideOffset = 0
+                slideOpacity = 1
+            }
         }
     }
 }
@@ -118,6 +177,8 @@ struct MusicControlsView: View {
     @State private var lastDragged: Date = .distantPast
     @Default(.musicControlSlots) private var slotConfig
     @Default(.musicControlSlotLimit) private var slotLimit
+    var songInfoOffset: CGFloat = 0
+    var songInfoOpacity: Double = 1
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -131,6 +192,8 @@ struct MusicControlsView: View {
         GeometryReader { geo in
             VStack(alignment: .leading, spacing: 4) {
                 songInfo(width: geo.size.width)
+                    .offset(x: songInfoOffset)
+                    .opacity(songInfoOpacity)
                 musicSlider
             }
         }

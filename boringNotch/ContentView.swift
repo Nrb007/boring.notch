@@ -146,6 +146,13 @@ struct ContentView: View {
                                 handleUpGesture(translation: translation, phase: phase)
                             }
                     }
+                    .onHorizontalSwipe { direction in
+                        // Swipe left for the shelf, right to go back home
+                        guard vm.notchState == .open, Defaults[.boringShelf] else { return }
+                        withAnimation(.smooth) {
+                            coordinator.currentView = direction == .left ? .shelf : .home
+                        }
+                    }
                     .onReceive(NotificationCenter.default.publisher(for: .sharingDidFinish)) { _ in
                         if vm.notchState == .open && !isHovering && !vm.isBatteryPopoverActive {
                             hoverTask?.cancel()

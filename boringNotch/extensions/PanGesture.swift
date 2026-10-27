@@ -143,3 +143,113 @@ private struct ScrollMonitor: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Horizontal swipe
+
+extension View {
+    /// Fires once per two-finger horizontal trackpad swipe over this view. Overlapping swipe regions
+    /// don't double-fire: only the smallest one under the pointer handles the swipe, and swipes over
+    /// content that scrolls horizontally (e.g. the calendar's date strip) are left to that content.
+    func onHorizontalSwipe(threshold: CGFloat = 40, perform action: @escaping (PanDirection) -> Void) -> some View {
+        background(SwipeMonitor(threshold: threshold, action: action))
+    }
+}
+
+private struct SwipeMonitor: NSViewRepresentable {
+    let threshold: CGFloat
+    let action: (PanDirection) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.installMonitor(on: view)
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) { context.coordinator.action = action }
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) { coordinator.removeMonitor() }
+
+    func makeCoordinator() -> Coordinator { Coordinator(threshold: threshold, action: action) }
+
+    @MainActor final class Coordinator: NSObject {
+        private static var registered: [Coordinator] = []
+
+        private let threshold: CGFloat
+        var action: (PanDirection) -> Void
+        private weak var view: NSView?
+        private var monitor: Any?
+        private var accumulated: CGFloat = 0
+        private var fired = false
+
+        init(threshold: CGFloat, action: @escaping (PanDirection) -> Void) {
+            self.threshold = threshold
+            self.action = action
+        }
+
+        func installMonitor(on view: NSView) {
+            removeMonitor()
+            self.view = view
+            Self.registered.append(self)
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+                self?.handleScroll(event)
+                return event
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            Self.registered.removeAll { $0 === self }
+        }
+
+        private func handleScroll(_ event: NSEvent) {
+            guard let view, event.window === view.window, event.hasPreciseScrollingDeltas else { return }
+
+            if event.phase == .began || event.phase == .mayBegin {
+                accumulated = 0
+                fired = false
+            }
+            // Trackpad finger movement only; ignore inertia after the fingers lift
+            guard !event.phase.isEmpty, event.momentumPhase.isEmpty, !fired else { return }
+
+            let absDX = abs(event.scrollingDeltaX)
+            let absDY = abs(event.scrollingDeltaY)
+            guard absDX >= 1.5 * absDY, owns(event.locationInWindow) else { return }
+
+            // Track the physical finger direction regardless of the natural scrolling setting
+            accumulated += event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+            if accumulated.magnitude >= threshold {
+                fired = true
+                action(accumulated < 0 ? .left : .right)
+            }
+        }
+
+        private func frameInWindow() -> CGRect? {
+            guard let view, view.window != nil else { return nil }
+            return view.convert(view.bounds, to: nil)
+        }
+
+        private func owns(_ point: CGPoint) -> Bool {
+            guard let frame = frameInWindow(), frame.contains(point) else { return false }
+            let area = frame.width * frame.height
+            let smallerRegionContainsPoint = Self.registered.contains { other in
+                guard other !== self, other.view?.window === view?.window,
+                      let otherFrame = other.frameInWindow() else { return false }
+                return otherFrame.contains(point) && otherFrame.width * otherFrame.height < area
+            }
+            return !smallerRegionContainsPoint && !isOverHorizontalScrollContent(point)
+        }
+
+        private func isOverHorizontalScrollContent(_ point: CGPoint) -> Bool {
+            var hit = view?.window?.contentView?.hitTest(point)
+            while let current = hit {
+                if let scrollView = current as? NSScrollView, let document = scrollView.documentView,
+                   document.frame.width > scrollView.contentSize.width + 1 {
+                    return true
+                }
+                hit = current.superview
+            }
+            return false
+        }
+    }
+}
