@@ -24,6 +24,8 @@ struct ContentView: View {
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
     @ObservedObject var calendarManager = CalendarManager.shared
+    @ObservedObject var timerService = NotchTimerService.shared
+    @ObservedObject var utilitiesState = UtilitiesState.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -66,6 +68,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if showTimerActivity {
+            chinWidth += 2 * timerWingWidth
         } else if showNextEventActivity {
             chinWidth += 2 * nextEventWingWidth
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
@@ -83,11 +87,22 @@ struct ContentView: View {
         return chinWidth
     }
 
-    private let nextEventWingWidth: CGFloat = 130
+    private let nextEventWingWidth: CGFloat = 140
+    private let timerWingWidth: CGFloat = 72
+
+    // Closed-notch album art: a little larger than the music activity's, with room around it
+    private var closedArtworkSide: CGFloat { max(0, vm.effectiveClosedNotchHeight - 9) }
 
     private var showNextEventActivity: Bool {
         Defaults[.showNextEventInClosedNotch] && vm.notchState == .closed && !vm.hideOnClosed
             && !coordinator.expandingView.show && calendarManager.nextEvent != nil
+            && !showTimerActivity
+    }
+
+    // A running or finished timer takes the closed notch over the next event and the music
+    private var showTimerActivity: Bool {
+        NotchTimerSupport.showsActivity(timerService.session) && vm.notchState == .closed
+            && !vm.hideOnClosed && !coordinator.expandingView.show
     }
 
     // While music is active the event view also carries the album art (in place of the waveform)
@@ -162,10 +177,14 @@ struct ContentView: View {
                             }
                     }
                     .onHorizontalSwipe { direction in
-                        // Swipe left for the shelf, right to go back home
-                        guard vm.notchState == .open, Defaults[.boringShelf] else { return }
+                        // Swipe left for the next tab, right for the previous one
+                        guard vm.notchState == .open else { return }
+                        let views = tabs.map(\.view)
+                        guard let index = views.firstIndex(of: coordinator.currentView) else { return }
+                        let next = direction == .left ? index + 1 : index - 1
+                        guard views.indices.contains(next) else { return }
                         withAnimation(.smooth) {
-                            coordinator.currentView = direction == .left ? .shelf : .home
+                            coordinator.currentView = views[next]
                         }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .sharingDidFinish)) { _ in
@@ -309,6 +328,11 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
+                      } else if showTimerActivity {
+                          TimerLiveActivity(showAlbumArt: musicLiveActivityActive)
+                              .transition(.opacity)
+                              // Tapping the closed timer opens straight to its page
+                              .simultaneousGesture(TapGesture().onEnded { utilitiesState.open(.timer) })
                       } else if showNextEventActivity, let event = calendarManager.nextEvent {
                           NextEventLiveActivity(event: event, showAlbumArt: musicLiveActivityActive)
                               .transition(.opacity)
@@ -374,6 +398,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .utilities:
+                        UtilitiesView()
                     }
                 }
                 .transition(
@@ -391,30 +417,20 @@ struct ContentView: View {
 
     func NextEventLiveActivity(event: EventModel, showAlbumArt: Bool) -> some View {
         HStack(spacing: 0) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 if showAlbumArt {
-                    Image(nsImage: musicManager.albumArt)
-                        .resizable()
-                        .clipped()
-                        .clipShape(
-                            RoundedRectangle(
-                                cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
-                        )
-                        .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
-                        .frame(
-                            width: max(0, vm.effectiveClosedNotchHeight - 12),
-                            height: max(0, vm.effectiveClosedNotchHeight - 12)
-                        )
-                        .padding(.trailing, 3)
+                    closedAlbumArt
+                        .padding(.trailing, 4)
                 }
                 Circle()
                     .fill(Color(nsColor: event.calendar.color))
-                    .frame(width: 6, height: 6)
+                    .frame(width: 7, height: 7)
                 Text(event.title)
+                    .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .padding(.leading, 10)
+            .padding(.leading, 8)
             .frame(width: nextEventWingWidth, alignment: .leading)
 
             Rectangle()
@@ -423,15 +439,74 @@ struct ContentView: View {
 
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 Text(countdownText(to: event.start, from: context.date))
+                    .font(.system(size: 12.5, weight: .medium))
                     .monospacedDigit()
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(.white.opacity(0.75))
             }
             .padding(.trailing, 10)
             .frame(width: nextEventWingWidth, alignment: .trailing)
         }
-        .font(.subheadline)
         .foregroundStyle(.white)
         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
+    private var closedAlbumArt: some View {
+        Image(nsImage: musicManager.albumArt)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(width: closedArtworkSide, height: closedArtworkSide)
+            .clipShape(
+                RoundedRectangle(cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
+            )
+            .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
+    }
+
+    /// The timer's mark (or the album art while music plays) on the left, its clock on the right.
+    func TimerLiveActivity(showAlbumArt: Bool) -> some View {
+        let session = timerService.session
+        return HStack(spacing: 0) {
+            Group {
+                if showAlbumArt {
+                    closedAlbumArt
+                } else {
+                    Image(systemName: session.completed ? "checkmark.circle"
+                          : session.isPaused ? "pause.circle" : session.countsUp ? "stopwatch" : "timer")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding(.leading, 8)
+            .frame(width: timerWingWidth, alignment: .leading)
+
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width)
+
+            Group {
+                if session.isRunning {
+                    TimelineView(.periodic(from: Date(timeIntervalSinceNow: NotchTimerSupport.tickScheduleOffset(
+                        for: session, at: timerService.now)), by: 1)) { _ in timerReading }
+                } else {
+                    timerReading
+                }
+            }
+            .padding(.trailing, 10)
+            .frame(width: timerWingWidth, alignment: .trailing)
+        }
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
+    private var timerReading: some View {
+        let session = timerService.session
+        let text = session.completed ? "Done" : NotchTimerSupport.compactText(for: session, at: timerService.now)
+        return Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.orange)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .contentTransition(.numericText(countsDown: !session.countsUp))
+            .animation(.smooth(duration: 0.25), value: text)
     }
 
     private func countdownText(to start: Date, from now: Date) -> String {
@@ -661,6 +736,8 @@ struct ContentView: View {
 
     private func handleUpGesture(translation: CGFloat, phase: NSEvent.Phase) {
         guard vm.notchState == .open && !vm.isHoveringCalendar else { return }
+        // Scrolling a note or the timer ruler shouldn't close the notch
+        guard !(coordinator.currentView == .utilities && utilitiesState.openUtility != nil) else { return }
 
         withAnimation(animationSpring) {
             gestureProgress = (translation / Defaults[.gestureSensitivity]) * -20

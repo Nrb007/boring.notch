@@ -243,6 +243,7 @@ private struct SwipeMonitor: NSViewRepresentable {
         private func isOverHorizontalScrollContent(_ point: CGPoint) -> Bool {
             var hit = view?.window?.contentView?.hitTest(point)
             while let current = hit {
+                if current is NSSlider || current is NSTextView { return true }
                 if let scrollView = current as? NSScrollView, let document = scrollView.documentView,
                    document.frame.width > scrollView.contentSize.width + 1 {
                     return true

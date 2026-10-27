@@ -109,6 +109,7 @@ class BoringNotchSkyLightWindow: NSPanel {
     
     private var observers: Set<AnyCancellable> = []
     
-    override var canBecomeKey: Bool { false }
+    // Only while a utility page with text input is showing (see NotchKeyboardFocus)
+    override var canBecomeKey: Bool { NotchKeyboardFocus.isRequested }
     override var canBecomeMain: Bool { false }
 }

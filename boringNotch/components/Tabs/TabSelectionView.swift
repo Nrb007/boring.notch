@@ -14,10 +14,19 @@ struct TabModel: Identifiable {
     let view: NotchViews
 }
 
-let tabs = [
-    TabModel(label: "Home", icon: "house.fill", view: .home),
-    TabModel(label: "Shelf", icon: "tray.fill", view: .shelf)
-]
+import Defaults
+
+/// Home always shows; Shelf and Utilities only when they're turned on.
+var tabs: [TabModel] {
+    var visible = [TabModel(label: "Home", icon: "house.fill", view: .home)]
+    if Defaults[.boringShelf] {
+        visible.append(TabModel(label: "Shelf", icon: "tray.fill", view: .shelf))
+    }
+    if !UtilityRegistry.enabled.isEmpty {
+        visible.append(TabModel(label: "Utilities", icon: "square.grid.2x2.fill", view: .utilities))
+    }
+    return visible
+}
 
 struct TabSelectionView: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
@@ -27,6 +36,10 @@ struct TabSelectionView: View {
             ForEach(tabs) { tab in
                     TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view) {
                         withAnimation(.smooth) {
+                            // Clicking Utilities again goes back to its grid
+                            if tab.view == .utilities && coordinator.currentView == .utilities {
+                                UtilitiesState.shared.close()
+                            }
                             coordinator.currentView = tab.view
                         }
                     }

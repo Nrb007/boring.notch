@@ -40,8 +40,9 @@ class BoringNotchWindow: NSPanel {
         hasShadow = false
     }
     
+    // Only while a utility page with text input is showing (see NotchKeyboardFocus)
     override var canBecomeKey: Bool {
-        false
+        NotchKeyboardFocus.isRequested
     }
     
     override var canBecomeMain: Bool {
