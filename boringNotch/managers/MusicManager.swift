@@ -219,13 +219,13 @@ class MusicManager: ObservableObject {
             }
             self.artworkData = state.artwork
 
-            if artworkChanged || state.artwork == nil {
-                // Update last artwork change values
-                self.lastArtworkTitle = state.title
-                self.lastArtworkArtist = state.artist
-                self.lastArtworkAlbum = state.album
-                self.lastArtworkBundleIdentifier = state.bundleIdentifier
-            }
+            // Always record what we've handled. Skipping this when the artwork was reused (consecutive
+            // tracks from the same album) left titleChanged stuck true, re-triggering the sneak peek on
+            // every subsequent update. New artwork arriving later is still caught by artworkChanged.
+            self.lastArtworkTitle = state.title
+            self.lastArtworkArtist = state.artist
+            self.lastArtworkAlbum = state.album
+            self.lastArtworkBundleIdentifier = state.bundleIdentifier
 
             // Only update sneak peek if there's actual content and something changed
             if !state.title.isEmpty && !state.artist.isEmpty && state.isPlaying {
