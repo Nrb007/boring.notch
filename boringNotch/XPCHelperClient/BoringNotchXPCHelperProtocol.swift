@@ -20,5 +20,7 @@ import Foundation
     func isScreenBrightnessAvailable(with reply: @escaping (Bool) -> Void)
     func currentScreenBrightness(with reply: @escaping (NSNumber?) -> Void)
     func setScreenBrightness(_ value: Float, with reply: @escaping (Bool) -> Void)
+    // Temperature sensors, keyed "cpu", "ssd" and "battery" in Celsius (performed by the helper)
+    func currentTemperatures(with reply: @escaping ([String: NSNumber]) -> Void)
 }
 

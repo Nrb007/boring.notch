@@ -139,6 +139,12 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
         reply(false)
     }
 
+    // MARK: - Temperatures
+    /// Celsius readings keyed "cpu", "ssd" and "battery"; a key is missing when the Mac has no such sensor
+    @objc func currentTemperatures(with reply: @escaping ([String: NSNumber]) -> Void) {
+        reply(TemperatureSensors.shared.read())
+    }
+
     // MARK: - Private helpers for DisplayServices / IOKit access
     private func displayServicesGetBrightness(displayID: CGDirectDisplayID, out: inout Float) -> Bool {
         guard let sym = dlsym(DisplayServicesHandle.handle, "DisplayServicesGetBrightness") else { return false }
@@ -187,5 +193,83 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
             }
             return nil
         }()
+    }
+}
+
+/// Reads Apple Silicon temperature sensors through the private IOHIDEventSystem API, which the sandboxed app can't reach
+private final class TemperatureSensors {
+    static let shared = TemperatureSensors()
+
+    private typealias ClientCreate = @convention(c) (CFAllocator?) -> Unmanaged<CFTypeRef>?
+    private typealias ClientSetMatching = @convention(c) (CFTypeRef, CFDictionary) -> Int32
+    private typealias ClientCopyServices = @convention(c) (CFTypeRef) -> Unmanaged<CFArray>?
+    private typealias ServiceCopyProperty = @convention(c) (CFTypeRef, CFString) -> Unmanaged<CFTypeRef>?
+    private typealias ServiceCopyEvent = @convention(c) (CFTypeRef, Int64, Int32, Int64) -> Unmanaged<CFTypeRef>?
+    private typealias EventGetFloatValue = @convention(c) (CFTypeRef, Int32) -> Double
+
+    private static let temperatureEventType: Int64 = 15
+    private static let temperatureField = Int32(15 << 16)
+
+    private let copyEvent: ServiceCopyEvent?
+    private let getFloatValue: EventGetFloatValue?
+    /// The services below stop working once the client that found them is released, so keep it alive
+    private var client: CFTypeRef?
+    /// Sensor services paired with their product names, looked up once
+    private var services: [(name: String, service: CFTypeRef)] = []
+    private let lock = NSLock()
+
+    private init() {
+        func symbol<T>(_ name: String, as type: T.Type) -> T? {
+            guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else { return nil }
+            return unsafeBitCast(sym, to: type)
+        }
+        copyEvent = symbol("IOHIDServiceClientCopyEvent", as: ServiceCopyEvent.self)
+        getFloatValue = symbol("IOHIDEventGetFloatValue", as: EventGetFloatValue.self)
+
+        guard let create = symbol("IOHIDEventSystemClientCreate", as: ClientCreate.self),
+              let setMatching = symbol("IOHIDEventSystemClientSetMatching", as: ClientSetMatching.self),
+              let copyServices = symbol("IOHIDEventSystemClientCopyServices", as: ClientCopyServices.self),
+              let copyProperty = symbol("IOHIDServiceClientCopyProperty", as: ServiceCopyProperty.self),
+              let client = create(kCFAllocatorDefault)?.takeRetainedValue()
+        else { return }
+
+        self.client = client
+        // Vendor usage page 0xff00, usage 5 is the temperature sensor class
+        _ = setMatching(client, ["PrimaryUsagePage": 0xff00, "PrimaryUsage": 5] as CFDictionary)
+        let all = copyServices(client)?.takeRetainedValue() as? [CFTypeRef] ?? []
+        services = all.compactMap { service in
+            guard let name = copyProperty(service, "Product" as CFString)?.takeRetainedValue() as? String else { return nil }
+            return (name, service)
+        }
+    }
+
+    func read() -> [String: NSNumber] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let copyEvent, let getFloatValue else { return [:] }
+
+        var cpu: [Double] = []
+        var ssd: [Double] = []
+        var battery: [Double] = []
+        for (name, service) in services {
+            guard let event = copyEvent(service, Self.temperatureEventType, 0, 0)?.takeRetainedValue() else { continue }
+            let value = getFloatValue(event, Self.temperatureField)
+            // Skip uncalibrated or idle sensors that report nonsense
+            guard value > 0, value < 130 else { continue }
+            if name.contains("tdie") {
+                cpu.append(value)
+            } else if name.hasPrefix("NAND") {
+                ssd.append(value)
+            } else if name.hasPrefix("gas gauge battery") {
+                battery.append(value)
+            }
+        }
+
+        var result: [String: NSNumber] = [:]
+        // The hottest die sensor is what throttling reacts to
+        if let hottest = cpu.max() { result["cpu"] = NSNumber(value: hottest) }
+        if let hottest = ssd.max() { result["ssd"] = NSNumber(value: hottest) }
+        if !battery.isEmpty { result["battery"] = NSNumber(value: battery.reduce(0, +) / Double(battery.count)) }
+        return result
     }
 }

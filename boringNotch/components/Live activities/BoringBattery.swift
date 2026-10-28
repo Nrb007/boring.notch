@@ -84,85 +84,264 @@ struct ScaleButtonStyle: ButtonStyle {
     }
 }
 
-/// A view that displays detailed battery information and settings.
+/// Samples CPU, memory and temperatures while the battery popover is open
+@MainActor
+final class SystemMonitor: ObservableObject {
+    @Published private(set) var cpuUsage: Double = 0
+    @Published private(set) var memoryUsed: UInt64 = 0
+    /// Celsius readings from the XPC helper, keyed "cpu", "ssd" and "battery"
+    @Published private(set) var temperatures: [String: Double] = [:]
+    let memoryTotal = ProcessInfo.processInfo.physicalMemory
+
+    private let host = mach_host_self()
+    private var previousTicks: (busy: UInt64, total: UInt64)?
+    private var timer: Timer?
+
+    func start() {
+        sample()
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sample() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        previousTicks = nil
+    }
+
+    private func sample() {
+        if let ticks = cpuTicks() {
+            // CPU load is the share of busy ticks since the previous sample
+            if let previous = previousTicks, ticks.total > previous.total {
+                cpuUsage = Double(ticks.busy - previous.busy) / Double(ticks.total - previous.total)
+            }
+            previousTicks = ticks
+        }
+        if let used = usedMemory() {
+            memoryUsed = used
+        }
+        // The sandbox blocks the sensors, so the unsandboxed helper reads them
+        Task {
+            let readings = await XPCHelperClient.shared.currentTemperatures()
+            if !readings.isEmpty { temperatures = readings }
+        }
+    }
+
+    private func cpuTicks() -> (busy: UInt64, total: UInt64)? {
+        var info = host_cpu_load_info()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.stride / MemoryLayout<integer_t>.stride)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let user = UInt64(info.cpu_ticks.0)
+        let system = UInt64(info.cpu_ticks.1)
+        let idle = UInt64(info.cpu_ticks.2)
+        let nice = UInt64(info.cpu_ticks.3)
+        return (user + system + nice, user + system + idle + nice)
+    }
+
+    /// Matches Activity Monitor's "Memory Used": app memory + wired + compressed
+    private func usedMemory() -> UInt64? {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride)
+        let result = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let appPages = UInt64(stats.internal_page_count) - UInt64(min(stats.purgeable_count, stats.internal_page_count))
+        let pages = appPages + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)
+        return pages * UInt64(vm_kernel_page_size)
+    }
+}
+
+/// A rounded tile in the battery popover's grid
+private struct StatTile<Content: View>: View {
+    var title: LocalizedStringKey
+    var systemImage: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: systemImage)
+                .font(.caption2)
+                .foregroundStyle(.gray)
+                .lineLimit(1)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// What's normal for a sensor, in Celsius, used to color its reading
+private struct TemperatureRange {
+    /// Left end of the tile's bar
+    var floor: Double
+    /// Green up to here
+    var normal: Double
+    /// Fully red from here
+    var hot: Double
+    /// Blue below here, for a battery that's too cold to charge well
+    var cold: Double? = nil
+
+    // Apple Silicon dies idle around 40–50° and throttle in the high 90s
+    static let cpu = TemperatureRange(floor: 30, normal: 60, hot: 95)
+    // NAND slows itself down past about 70°
+    static let ssd = TemperatureRange(floor: 25, normal: 45, hot: 70)
+    // Apple rates the battery for 10–35°; above 45° it ages quickly
+    static let battery = TemperatureRange(floor: 10, normal: 35, hot: 45, cold: 10)
+
+    func fraction(_ reading: Double) -> Double {
+        min(max((reading - floor) / (hot + 10 - floor), 0), 1)
+    }
+
+    /// Green while normal, easing through yellow and orange to red at hot
+    func color(_ reading: Double) -> Color {
+        if let cold, reading < cold { return .blue }
+        let heat = min(max((reading - normal) / (hot - normal), 0), 1)
+        return Color(hue: 0.33 * (1 - heat), saturation: 0.75, brightness: 0.95)
+    }
+}
+
+/// CPU and memory load plus temperatures, laid out as tiles under the battery header
+struct SystemMonitorSection: View {
+    @StateObject private var monitor = SystemMonitor()
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                loadTile(
+                    title: "CPU",
+                    systemImage: "cpu",
+                    value: "\(Int((monitor.cpuUsage * 100).rounded()))%",
+                    fraction: monitor.cpuUsage
+                )
+                loadTile(
+                    title: "Memory",
+                    systemImage: "memorychip",
+                    value: "\(formatGigabytes(monitor.memoryUsed)) GB",
+                    fraction: Double(monitor.memoryUsed) / Double(max(monitor.memoryTotal, 1))
+                )
+            }
+            HStack(spacing: 8) {
+                temperatureTile(title: "CPU", systemImage: "thermometer.medium", key: "cpu", range: .cpu)
+                temperatureTile(title: "SSD", systemImage: "internaldrive", key: "ssd", range: .ssd)
+                temperatureTile(title: "Battery", systemImage: "battery.100", key: "battery", range: .battery)
+            }
+        }
+        .onAppear { monitor.start() }
+        .onDisappear { monitor.stop() }
+    }
+
+    private func loadTile(title: LocalizedStringKey, systemImage: String, value: String, fraction: Double) -> some View {
+        let fraction = min(max(fraction, 0), 1)
+        return StatTile(title: title, systemImage: systemImage) {
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.1))
+                    Capsule()
+                        .fill(fraction > 0.85 ? Color.red : fraction > 0.6 ? Color.yellow : Color.green)
+                        .frame(width: max(proxy.size.width * fraction, 4))
+                }
+            }
+            .frame(height: 4)
+        }
+        .animation(.smooth, value: fraction)
+    }
+
+    private func temperatureTile(title: LocalizedStringKey, systemImage: String, key: String, range: TemperatureRange) -> some View {
+        let reading = monitor.temperatures[key]
+        let color = reading.map(range.color) ?? .gray
+        return StatTile(title: title, systemImage: systemImage) {
+            Text(reading.map { "\(Int($0.rounded()))°" } ?? "–")
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .foregroundStyle(color)
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.1))
+                    if let reading {
+                        Capsule()
+                            .fill(color)
+                            .frame(width: max(proxy.size.width * range.fraction(reading), 4))
+                    }
+                }
+            }
+            .frame(height: 4)
+        }
+        .animation(.smooth, value: reading)
+    }
+
+    private func formatGigabytes(_ bytes: UInt64) -> String {
+        let gigabytes = Double(bytes) / 1_073_741_824
+        return gigabytes.formatted(.number.precision(.fractionLength(1)))
+    }
+}
+
+/// A view that displays detailed battery information and system stats.
 struct BatteryMenuView: View {
-    
+
     var isPluggedIn: Bool
     var isCharging: Bool
     var levelBattery: Float
     var maxCapacity: Float
     var timeToFullCharge: Int
     var isInLowPowerMode: Bool
-    var onDismiss: () -> Void
-
-    @Environment(\.openURL) private var openURL
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-
-            HStack {
-                Text("Battery Status")
-                    .font(.headline)
-                    .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Battery")
+                        .font(.headline)
+                    statusLine
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                }
                 Spacer()
                 Text("\(Int(levelBattery))%")
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                    .font(.system(.title2, design: .rounded).weight(.semibold))
+                    .monospacedDigit()
             }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Max Capacity: \(Int(maxCapacity))%")
-                    .font(.subheadline)
-                    .fontWeight(.regular)
-                if isInLowPowerMode {
-                    Label("Low Power Mode", systemImage: "bolt.circle")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if isCharging {
-                    Label("Charging", systemImage: "bolt.fill")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if isPluggedIn {
-                    Label("Plugged In", systemImage: "powerplug.fill")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if timeToFullCharge > 0 {
-                    Label("Time to Full Charge: \(timeToFullCharge) min", systemImage: "clock")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if !isCharging && isPluggedIn && levelBattery >= 80 {
-                    Label("Charging on Hold: Desktop Mode", systemImage: "desktopcomputer")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                    
-            }
-            .padding(.vertical, 8)
 
-            Divider().background(Color.white)
-
-            Button(action: openBatteryPreferences) {
-                Label("Battery Settings", systemImage: "gearshape")
-                    .fontWeight(.regular)
-            }
-            .frame(maxWidth: .infinity)
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
+            SystemMonitorSection()
         }
-        .padding()
+        .padding(12)
         .frame(width: 280)
         .foregroundColor(.white)
     }
 
-    private func openBatteryPreferences() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.battery") {
-            openURL(url)
-            onDismiss()
+    /// One line summing up power state, e.g. "Charging · 40 min to full"
+    private var statusLine: Text {
+        var parts: [String] = []
+        if isInLowPowerMode {
+            parts.append(String(localized: "Low Power Mode"))
         }
+        if isCharging {
+            parts.append(String(localized: "Charging"))
+            if timeToFullCharge > 0 {
+                parts.append(String(localized: "\(timeToFullCharge) min to full"))
+            }
+        } else if isPluggedIn && levelBattery >= 80 {
+            parts.append(String(localized: "Charging on Hold"))
+        } else if isPluggedIn {
+            parts.append(String(localized: "Plugged In"))
+        }
+        parts.append(String(localized: "Max capacity \(Int(maxCapacity))%"))
+        return Text(parts.joined(separator: " · "))
     }
 }
 
@@ -225,10 +404,7 @@ struct BoringBatteryView: View {
                 levelBattery: levelBattery,
                 maxCapacity: maxCapacity,
                 timeToFullCharge: timeToFullCharge,
-                isInLowPowerMode: isInLowPowerMode,
-                onDismiss: { 
-                    showPopupMenu = false
-                }
+                isInLowPowerMode: isInLowPowerMode
             )
             .onHover { hovering in
                 isHoveringPopover = hovering

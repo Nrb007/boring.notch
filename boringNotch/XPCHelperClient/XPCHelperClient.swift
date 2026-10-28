@@ -241,6 +241,24 @@ final class XPCHelperClient: NSObject {
             return false
         }
     }
+
+    // MARK: - Temperatures
+
+    nonisolated func currentTemperatures() async -> [String: Double] {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            let result: [String: NSNumber] = try await service.withContinuation { service, continuation in
+                service.currentTemperatures { values in
+                    continuation.resume(returning: values)
+                }
+            }
+            return result.mapValues { $0.doubleValue }
+        } catch {
+            return [:]
+        }
+    }
 }
 
 extension Notification.Name {
