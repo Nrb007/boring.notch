@@ -19512,6 +19512,9 @@
         }
       }
     },
+    "Show next event in closed notch" : {
+
+    },
     "Show notch on lock screen" : {
       "localizations" : {
         "ar" : {

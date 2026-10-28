@@ -23,7 +23,7 @@ class CalendarManager: ObservableObject {
     @Published var selectedCalendarIDs: Set<String> = []
     @Published var calendarAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     @Published var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
-    /// Next timed event starting within the next 24 hours, for the closed-notch countdown
+    /// Next timed event starting within the next 3 hours, for the closed-notch countdown
     @Published var nextEvent: EventModel?
     private var selectedCalendars: [CalendarModel] = []
     private let calendarService = CalendarService()
@@ -88,7 +88,7 @@ class CalendarManager: ObservableObject {
         let now = Date()
         let upcoming = await calendarService.events(
             from: now,
-            to: now.addingTimeInterval(24 * 60 * 60),
+            to: now.addingTimeInterval(3 * 60 * 60),
             calendars: selectedCalendars.map { $0.id }
         )
         let next = upcoming
