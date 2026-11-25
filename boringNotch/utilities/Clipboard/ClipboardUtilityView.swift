@@ -233,8 +233,9 @@ struct ClipboardUtilityView: View {
                 hoveredID = nil
             }
         }
+        .onDrag { ClipboardDragProvider.provider(for: entry) }
         .contextMenu { actions(entry) }
-        .help(canPaste ? "Click to paste into the app in front" : "Click to copy")
+        .help(canPaste ? "Click to paste into the app in front, or drag it out" : "Click to copy, or drag it out")
     }
 
     private func rowButton(symbol: String, help: String, action: @escaping () -> Void) -> some View {
@@ -397,6 +398,57 @@ struct ClipboardUtilityView: View {
         if copiedID == entry.id { copiedID = nil }
         if highlightedID == entry.id { highlightedID = nil }
         history.remove(entry)
+    }
+}
+
+/// What a row carries when it's dragged out of the notch: the text itself, the
+/// copied file, or the image as a PNG file with a readable name. The stored
+/// image is never handed out directly, so a drop that moves it can't take it
+/// out of the history.
+@MainActor
+private enum ClipboardDragProvider {
+    static func provider(for entry: ClipboardHistoryEntry) -> NSItemProvider {
+        switch entry.kind {
+        case .text:
+            return NSItemProvider(object: entry.text as NSString)
+        case .files:
+            // SwiftUI drags carry one item, so an entry of several files only
+            // drags its first one that still exists.
+            guard let url = entry.filePaths.lazy.map({ URL(fileURLWithPath: $0) })
+                .first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+                let provider = NSItemProvider(contentsOf: url) else { return NSItemProvider() }
+            provider.suggestedName = url.lastPathComponent
+            return provider
+        case .image:
+            guard let name = entry.imageFile,
+                  let data = ClipboardImageStore.imageData(named: name),
+                  let url = temporaryImageFile(data, copiedAt: entry.copiedAt),
+                  let provider = NSItemProvider(contentsOf: url) else { return NSItemProvider() }
+            provider.suggestedName = url.deletingPathExtension().lastPathComponent
+            return provider
+        }
+    }
+
+    private static let nameFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        return formatter
+    }()
+
+    /// A fresh folder per drag keeps the name free of collisions; the system
+    /// clears the temporary directory.
+    private static func temporaryImageFile(_ data: Data, copiedAt: Date) -> URL? {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClipboardDrag", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let url = folder.appendingPathComponent("Image \(nameFormatter.string(from: copiedAt)).png")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
     }
 }
 
