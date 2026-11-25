@@ -19,6 +19,7 @@ enum UtilityID: String, CaseIterable, Codable, Defaults.Serializable {
     case clipboard
     case watch
     case mirror
+    case coin
 }
 
 struct NotchUtility: Identifiable {
@@ -52,6 +53,8 @@ enum UtilityRegistry {
                      makeSettings: { AnyView(WatchSettingsSection()) }),
         NotchUtility(id: .mirror, title: "Mirror", symbol: "web.camera", tint: .green, needsKeyboard: false,
                      makePage: { AnyView(MirrorUtilityView()) }),
+        NotchUtility(id: .coin, title: "Coin Flip", symbol: "centsign.circle", tint: coinGold, needsKeyboard: false,
+                     makePage: { AnyView(CoinUtilityView()) }),
     ]
 
     static func utility(_ id: UtilityID) -> NotchUtility? {
