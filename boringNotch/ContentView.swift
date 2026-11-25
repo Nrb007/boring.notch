@@ -297,6 +297,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .environmentObject(vm)
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
+            NSLog("DROPDEBUG anyDropZoneTargeting=\(isTargeted) state=\(vm.notchState) view=\(coordinator.currentView) dragDetector=\(vm.dragDetectorTargeting) general=\(vm.generalDropTargeting) dropZone=\(vm.dropZoneTargeting)")
             anyDropDebounceTask?.cancel()
 
             if isTargeted {
@@ -789,6 +790,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
+            NSLog("DROPDEBUG closed detector drop")
             vm.dropEvent = true
             ShelfStateViewModel.shared.load(providers)
             return true
@@ -934,10 +936,12 @@ struct GeneralDropTargetDelegate: DropDelegate {
     @Binding var isTargeted: Bool
 
     func dropEntered(info: DropInfo) {
+        NSLog("DROPDEBUG general entered at \(info.location)")
         isTargeted = true
     }
 
     func dropExited(info: DropInfo) {
+        NSLog("DROPDEBUG general exited at \(info.location)")
         isTargeted = false
     }
 
@@ -946,6 +950,7 @@ struct GeneralDropTargetDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        NSLog("DROPDEBUG general performDrop at \(info.location)")
         return false
     }
 }
