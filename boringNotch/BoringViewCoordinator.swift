@@ -66,6 +66,15 @@ class BoringViewCoordinator: ObservableObject {
         }
     }
 
+    /// Two-finger swipe left goes to the next tab, right to the previous one.
+    func stepTab(_ direction: PanDirection) {
+        let views = tabs.map(\.view)
+        guard let index = views.firstIndex(of: currentView) else { return }
+        let next = direction == .left ? index + 1 : index - 1
+        guard views.indices.contains(next) else { return }
+        switchTab(to: views[next])
+    }
+
     @Published var helloAnimationRunning: Bool = false
     private var sneakPeekDispatch: DispatchWorkItem?
     private var expandingViewDispatch: DispatchWorkItem?

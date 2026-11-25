@@ -214,11 +214,7 @@ struct ContentView: View {
                     .onHorizontalSwipe { direction in
                         // Swipe left for the next tab, right for the previous one
                         guard vm.notchState == .open else { return }
-                        let views = tabs.map(\.view)
-                        guard let index = views.firstIndex(of: coordinator.currentView) else { return }
-                        let next = direction == .left ? index + 1 : index - 1
-                        guard views.indices.contains(next) else { return }
-                        coordinator.switchTab(to: views[next])
+                        coordinator.stepTab(direction)
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .sharingDidFinish)) { _ in
                         if vm.notchState == .open && !isHovering && !vm.isBatteryPopoverActive {

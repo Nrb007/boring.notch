@@ -811,6 +811,7 @@ struct CalendarSettings: View {
                     }
                 }
             }
+            TodoListSettingsSection()
         }
         .accentColor(.effectiveAccent)
         .navigationTitle("Calendar")
@@ -820,6 +821,37 @@ struct CalendarSettings: View {
                 await calendarManager.checkReminderAuthorization()
             }
         }
+    }
+}
+
+/// Which reminder lists the home page to-do list (swipe left on the calendar) shows.
+private struct TodoListSettingsSection: View {
+    @ObservedObject private var store = TodoStore.shared
+    @Default(.todoHiddenListIDs) private var hiddenListIDs
+
+    var body: some View {
+        Section {
+            if !store.hasAccess {
+                Button("Allow Reminders Access") {
+                    Task { await store.requestAccess() }
+                }
+            } else {
+                ForEach(store.lists) { list in
+                    Toggle(isOn: Binding(
+                        get: { !hiddenListIDs.contains(list.id) },
+                        set: { store.setShown(list, $0) }
+                    )) {
+                        Text(list.title)
+                    }
+                    .accentColor(lighterColor(from: list.color))
+                }
+            }
+        } header: {
+            Text("To-do list")
+        } footer: {
+            Text("Swipe left on the calendar to see the to-do list. It shows incomplete reminders from the lists turned on here.")
+        }
+        .onAppear { store.loadLists() }
     }
 }
 

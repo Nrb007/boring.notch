@@ -108,6 +108,8 @@ extension Defaults.Keys {
     static let tileShowLabels = Key<Bool>("tileShowLabels", default: false)
     static let showCalendar = Key<Bool>("showCalendar", default: false)
     static let hideCompletedReminders = Key<Bool>("hideCompletedReminders", default: true)
+    /// Reminder lists left out of the home page to-do list (new lists show by default)
+    static let todoHiddenListIDs = Key<Set<String>>("todoHiddenListIDs", default: [])
     static let sliderColor = Key<SliderColorEnum>(
         "sliderUseAlbumArtColor",
         default: SliderColorEnum.white

@@ -490,6 +490,7 @@ struct NotchHomeView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     let albumArtNamespace: Namespace.ID
+    @State private var showingTodo = false
 
     var body: some View {
         Group {
@@ -510,7 +511,7 @@ struct NotchHomeView: View {
             MusicPlayerView(albumArtNamespace: albumArtNamespace)
 
             if Defaults[.showCalendar] {
-                CalendarView()
+                calendarOrTodo
                     .frame(width: shouldShowCamera ? 170 : 215)
                     .onHover { isHovering in
                         vm.isHoveringCalendar = isHovering
@@ -529,6 +530,35 @@ struct NotchHomeView: View {
         }
         .transition(.opacity)
         .blur(radius: vm.notchState == .closed ? 30 : 0)
+    }
+}
+
+extension NotchHomeView {
+    /// The calendar slot flips to the to-do list on a two-finger swipe left, and back on a swipe right.
+    /// Swipes past either end (right on the calendar, left on the to-do list) switch tabs as usual.
+    fileprivate var calendarOrTodo: some View {
+        ZStack {
+            if showingTodo {
+                TodoListView()
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing))
+                        .combined(with: .opacity))
+            } else {
+                CalendarView()
+                    .transition(.asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .leading))
+                        .combined(with: .opacity))
+            }
+        }
+        .clipped()
+        .contentShape(Rectangle())
+        .onHorizontalSwipe { direction in
+            guard vm.notchState == .open else { return }
+            switch (showingTodo, direction) {
+            case (false, .left), (true, .right):
+                withAnimation(.smooth(duration: 0.25)) { showingTodo.toggle() }
+            default:
+                coordinator.stepTab(direction)
+            }
+        }
     }
 }
 
